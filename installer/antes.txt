@@ -1,0 +1,9 @@
+﻿CelCam hará estos cambios en tu PC:
+
+• Instala la cámara virtual «CelCam», para que Zoom, Meet, Teams, Discord y OBS puedan verla.
+
+• Agrega una regla en el Firewall de Windows para que tu celular pueda conectarse a CelCam dentro de tu red.
+
+Todo esto se quita al desinstalar CelCam.
+
+Tu video va directo del celular a esta PC. CelCam no lo envía a Internet.

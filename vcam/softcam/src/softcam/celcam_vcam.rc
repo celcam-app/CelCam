@@ -1,0 +1,31 @@
+// Datos de versión de la cámara virtual de CelCam.
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_DLL
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "CelCam"
+            VALUE "FileDescription", "CelCam virtual camera"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "InternalName", "celcam_vcam"
+            VALUE "LegalCopyright", "Based on Softcam (MIT)"
+            VALUE "OriginalFilename", "celcam_vcam.dll"
+            VALUE "ProductName", "CelCam"
+            VALUE "ProductVersion", "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

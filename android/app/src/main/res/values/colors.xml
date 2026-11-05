@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fondo">#111318</color>
+    <color name="panel">#E61A1D24</color>
+    <color name="panel_claro">#242833</color>
+    <color name="texto">#ECEFF4</color>
+    <color name="texto_suave">#969EAB</color>
+    <color name="acento">#2DD4BF</color>
+    <color name="acento_texto">#06241F</color>
+    <color name="aviso">#FBBF24</color>
+    <color name="ic_fondo">#111318</color>
+</resources>

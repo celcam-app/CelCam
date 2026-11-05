@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lo que se firma antes de armar el instalador: solo lo que este repositorio compila. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="CelCam.exe" product-name="CelCam" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="x64/celcam_vcam.dll" product-name="CelCam" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="x86/celcam_vcam.dll" product-name="CelCam" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

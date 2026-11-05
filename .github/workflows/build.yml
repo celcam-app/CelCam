@@ -1,0 +1,176 @@
+# Compila todo desde el código público. Con una etiqueta vX.Y.Z publica una versión.
+# Las versiones se firman con SignPath cuando existe la variable SIGNPATH_ORGANIZATION_ID;
+# cada firma espera la aprobación manual en SignPath, por eso no se firma en cada cambio.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '8.9'
+
+      - name: Install Python packages
+        run: python -m pip install -r pc/requirements-dev.txt
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = python -c "import sys; sys.path.insert(0, 'pc'); import celcam; print(celcam.__version__)"
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          if ('${{ github.ref_name }}' -ne 'v${{ steps.version.outputs.version }}') { throw 'La etiqueta no coincide con la versión' }
+
+      - name: Tests
+        working-directory: pc
+        run: python -m pytest -q -p no:cacheprovider tests
+
+      - name: Prepare the APK signing key
+        shell: pwsh
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if (-not $env:KEYSTORE_BASE64) {
+            if ('${{ github.ref }}' -like 'refs/tags/*') { throw 'Una versión publicada necesita la llave del APK' }
+            Write-Host 'Sin llave: el APK sale firmado con la llave de pruebas.'
+            exit 0
+          }
+          $keystore = Join-Path $env:RUNNER_TEMP 'celcam.p12'
+          [IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:KEYSTORE_BASE64))
+          $properties = Join-Path $env:RUNNER_TEMP 'firma.properties'
+          $path = $keystore.Replace('\', '/')
+          "storeFile=$path`nstorePassword=$env:KEYSTORE_PASSWORD`nkeyAlias=celcam`nkeyPassword=$env:KEYSTORE_PASSWORD`n" | Set-Content $properties -NoNewline
+          "CELCAM_FIRMA=$properties" >> $env:GITHUB_ENV
+
+      - name: Build camera, app and PC program
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\construir.ps1 -Pasos camara,app,programa
+
+      - name: Collect the files to sign
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force a-firmar\x64, a-firmar\x86 | Out-Null
+          Copy-Item pc\dist\CelCam\CelCam.exe a-firmar\
+          Copy-Item pc\stage\vcam\x64\celcam_vcam.dll a-firmar\x64\
+          Copy-Item pc\stage\vcam\x86\celcam_vcam.dll a-firmar\x86\
+
+      - name: Upload the files to sign
+        id: binaries-unsigned
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: binarios-sin-firmar
+          path: a-firmar
+
+      - name: Sign the program and the camera
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: CelCam
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: binarios
+          github-artifact-id: ${{ steps.binaries-unsigned.outputs.artifact-id }}
+          parameters: |
+            version: "${{ steps.version.outputs.version }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: firmados
+
+      - name: Put the signed files in place
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item firmados\CelCam.exe pc\dist\CelCam\CelCam.exe -Force
+          Copy-Item firmados\x64\celcam_vcam.dll pc\stage\vcam\x64\celcam_vcam.dll -Force
+          Copy-Item firmados\x86\celcam_vcam.dll pc\stage\vcam\x86\celcam_vcam.dll -Force
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the installer
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\construir.ps1 -Pasos instalador
+
+      - name: Upload the installer
+        id: installer-unsigned
+        uses: actions/upload-artifact@v5
+        with:
+          name: instalador
+          path: dist/CelCam-Instalador-*.exe
+
+      - name: Sign the installer
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: CelCam
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: instalador
+          github-artifact-id: ${{ steps.installer-unsigned.outputs.artifact-id }}
+          parameters: |
+            version: "${{ steps.version.outputs.version }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist
+
+      - name: Upload the final files
+        uses: actions/upload-artifact@v5
+        with:
+          name: version-final
+          path: |
+            dist/CelCam-Instalador-*.exe
+            pc/stage/CelCam.apk
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: version-final
+          path: final
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --title "CelCam $TAG" --generate-notes \
+            final/dist/CelCam-Instalador-*.exe final/pc/stage/CelCam.apk

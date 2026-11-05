@@ -1,0 +1,28 @@
+CelCam se distribuye bajo la licencia GPL-3.0-or-later (ver LICENSE.txt).
+Código fuente: https://github.com/celcam-app/CelCam
+
+CelCam usa estos componentes de terceros. Todos son de código abierto.
+
+Incluidos en el programa de PC
+  Softcam (cámara virtual, modificada para CelCam) - MIT
+    https://github.com/tshino/softcam
+    Incluye Base Classes de Microsoft Windows Samples - MIT
+  Python - PSF-2.0
+  PyAV - BSD-3-Clause
+    https://github.com/PyAV-Org/PyAV
+  FFmpeg y sus bibliotecas (incluye x264 y x265, GPL-2.0-or-later) - LGPL-3.0-or-later y GPL
+    Compilación y fuentes: https://github.com/PyAV-Org/pyav-ffmpeg
+  NumPy - BSD-3-Clause
+  Pillow - MIT-CMU
+  CustomTkinter - MIT
+  segno - BSD-3-Clause
+  cryptography - Apache-2.0 o BSD-3-Clause
+  psutil - BSD-3-Clause
+
+Incluidos en la app de Android
+  AndroidX - Apache-2.0
+  ZXing y ZXing Android Embedded (lector de QR) - Apache-2.0
+
+No incluido
+  adb, de Android SDK Platform-Tools (Google): solo se descarga de Google, con confirmación,
+  si el usuario elige conectar por cable.

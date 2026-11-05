@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CelCam</string>
+    <string name="ayuda_primera_vez">Abre CelCam en tu PC y escanea el código que aparece en la pantalla.</string>
+    <string name="ayuda_con_pc">Abre CelCam en tu PC y toca Conectar. Si cambiaste de PC o de red, vuelve a escanear el código.</string>
+    <string name="escanear">Escanear código</string>
+    <string name="escaner_ayuda">Apunta al código que muestra CelCam en tu PC</string>
+    <string name="conectar">Conectar</string>
+    <string name="conectar_a">Conectar a %1$s</string>
+    <string name="cancelar">Cancelar</string>
+    <string name="confirmar_titulo">¿Enviar tu cámara a esta PC?</string>
+    <string name="confirmar_texto">Otra app pidió conectar CelCam con «%1$s» (%2$s). Toca Conectar solo si es tu PC.</string>
+    <string name="estado_conectando">Buscando a %1$s…</string>
+    <string name="estado_transmitiendo">Transmitiendo a %1$s</string>
+    <string name="estado_transmitiendo_fps">Transmitiendo a %1$s · %2$d cuadros/s</string>
+    <string name="cambiar_camara">Cámara</string>
+    <string name="linterna">Linterna</string>
+    <string name="linterna_apagar">Apagar</string>
+    <string name="oscurecer">Oscurecer</string>
+    <string name="oscuro_ayuda">CelCam sigue transmitiendo. Toca para volver.</string>
+    <string name="detener">Detener</string>
+    <string name="zoom_valor">%1$.1f×</string>
+    <string name="canal_transmision">Transmisión de la cámara</string>
+    <string name="notificacion_titulo">CelCam está usando la cámara</string>
+    <string name="notificacion_texto">Tu video se envía solo a tu PC. Toca para abrir.</string>
+    <string name="problema_permiso">CelCam necesita permiso para usar la cámara. Actívalo en los ajustes del celular.</string>
+    <string name="problema_qr">Ese código no es de CelCam. Escanea el que aparece en la ventana de tu PC.</string>
+    <string name="problema_codigo">Esta PC ya no reconoce tu celular. Escanea el código otra vez.</string>
+    <string name="problema_reconectando">No se encuentra la PC. Revisa que CelCam esté abierto y que estén en el mismo WiFi.</string>
+    <string name="problema_otra_pc">No se pudo confirmar que sea tu PC. Escanea otra vez el código que aparece en CelCam.</string>
+    <string name="problema_reemplazado">Otro celular se conectó a esta PC. Toca Conectar para volver a usar este.</string>
+    <string name="problema_primer_plano">Android no dejó usar la cámara. Abre CelCam y vuelve a tocar Conectar.</string>
+</resources>

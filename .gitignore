@@ -1,0 +1,35 @@
+# Herramientas y resultados de compilación
+/tools/
+/dist/
+/pc/.venv/
+/pc/build/
+/pc/dist/
+/pc/stage/
+/pc/*.spec
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Android
+/android/.gradle/
+/android/.kotlin/
+/android/build/
+/android/app/build/
+/android/local.properties
+
+# Cámara virtual
+/vcam/softcam/dist/
+/vcam/softcam/x64/
+/vcam/softcam/Win32/
+/vcam/softcam/src/**/x64/
+/vcam/softcam/src/**/Win32/
+/vcam/softcam/.vs/
+*.user
+
+# Llaves: nunca al repositorio
+*.p12
+*.jks
+*.keystore
+firma.properties
+
+*.log
