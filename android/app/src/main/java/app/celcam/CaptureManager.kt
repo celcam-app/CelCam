@@ -110,7 +110,7 @@ class CaptureManager(
         bitrate = newBitrate
         if (running != null && config == newConfig) {
             // Reconexión con la cámara ya andando: alcanza con una imagen completa.
-            running.setBitrate(newBitrate)
+            running.setBitrate(realBitrate(newBitrate))
             running.requestKeyFrame()
             publishInfo()
         } else {
@@ -120,11 +120,31 @@ class CaptureManager(
     }
 
     fun applyConfig(newConfig: StreamConfig, newBitrate: Int) = handler.post {
-        if (config != null && config != newConfig) {
+        val current = config
+        if (current != null && current != newConfig) {
             config = newConfig
             bitrate = newBitrate
-            begin()
+            val running = encoder
+            if (running != null && captureStaysTheSame(current, newConfig, running)) {
+                // Por ejemplo, piden 60 cuadros y esta cámara sigue en 30: no hace falta cortar la imagen.
+                running.setBitrate(realBitrate(newBitrate))
+                publishInfo()
+            } else {
+                begin()
+            }
         }
+    }
+
+    private fun captureStaysTheSame(old: StreamConfig, new: StreamConfig, running: H264Encoder): Boolean {
+        val chars = characteristics ?: return false
+        if (old.width != new.width || old.height != new.height) return false
+        return ratePlan == planRate(cameras[cameraIndex], chars, Size(running.width, running.height), new.fps)
+    }
+
+    private fun realBitrate(value: Int): Int {
+        val wanted = config?.fps ?: return value
+        val real = ratePlan?.fps ?: return value
+        return scaleBitrate(value, wanted, real)
     }
 
     fun stop() {
@@ -181,7 +201,7 @@ class CaptureManager(
 
     fun setBitrate(value: Int) = handler.post {
         bitrate = value
-        encoder?.setBitrate(value)
+        encoder?.setBitrate(realBitrate(value))
     }
 
     // Cámara
@@ -220,7 +240,9 @@ class CaptureManager(
         for (size in candidateSizes(chars, cfg.width, cfg.height)) {
             try {
                 val plan = planRate(id, chars, size, cfg.fps)
-                val created = H264Encoder(size.width, size.height, plan.fps, bitrate, sink)
+                val real = scaleBitrate(bitrate, cfg.fps, plan.fps)
+                val created = H264Encoder(size.width, size.height, plan.fps, real, sink)
+                Log.i(TAG, "Codificador: $size a ${plan.fps} cuadros y $real bps; la PC pidió ${cfg.fps} y $bitrate")
                 ratePlan = plan
                 return created
             } catch (e: RuntimeException) {
@@ -464,6 +486,17 @@ class CaptureManager(
 
         const val ASPECT_TOLERANCE = 0.05f
         const val FALLBACK_FPS = 30
+
+        /** Los mismos factores que FPS_OPTIONS en pc/celcam/settings.py. */
+        fun bitrateFactor(fps: Int) = when {
+            fps <= 30 -> 1f
+            fps <= 60 -> 1.5f
+            else -> 2f
+        }
+
+        /** La PC calcula los datos según los cuadros pedidos. Si la cámara da menos, mandar más solo recarga el Wi-Fi. */
+        fun scaleBitrate(value: Int, wanted: Int, real: Int) =
+            (value * bitrateFactor(real) / bitrateFactor(wanted)).toInt()
 
         /** Hasta cuántos cuadros por segundo da la cámara con este tamaño, en una sesión normal. */
         fun sizeFpsLimit(chars: CameraCharacteristics, size: Size): Int {

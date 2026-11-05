@@ -13,6 +13,7 @@ from . import APP_NAME, __version__, paths
 from .core import Core
 from .identity import Identity
 from .settings import Settings
+from .tray import ShowSignal, ask_running_copy_to_show
 from .vcam import CameraBusy, NullCamera, VirtualCamera, is_registered
 
 log = logging.getLogger("celcam")
@@ -86,9 +87,12 @@ def main() -> int:
     settings = Settings.load(settings_path)
 
     if _already_running():
-        ctypes.windll.user32.MessageBoxW(None, f"{APP_NAME} ya está abierto.", APP_NAME, 0x40)
+        # Puede estar oculto junto al reloj: se le pide que aparezca.
+        if not ask_running_copy_to_show():
+            ctypes.windll.user32.MessageBoxW(None, f"{APP_NAME} ya está abierto.", APP_NAME, 0x40)
         return 0
 
+    show_signal = ShowSignal()
     camera, problem = _open_camera(settings)
     identity = Identity.load_or_create(data)
     core = Core(settings, identity, camera, settings_path)
@@ -105,7 +109,7 @@ def main() -> int:
         # Se importa recién acá para que las pruebas sin ventana no necesiten Tk.
         from .ui import Window
 
-        Window(core, problem).mainloop()
+        Window(core, problem, show_signal).mainloop()
         return 0
     finally:
         core.stop()

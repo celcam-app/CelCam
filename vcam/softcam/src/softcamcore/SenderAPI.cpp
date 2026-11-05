@@ -58,6 +58,16 @@ void            SendFrame(CameraHandle camera, const void* image_bits)
     }
 }
 
+bool            SetFormat(CameraHandle camera, int width, int height, float framerate, const void* image_bits)
+{
+    Camera* target = static_cast<Camera*>(camera);
+    if (target && s_camera.load() == target)
+    {
+        return target->m_frame_buffer.setFormat(width, height, framerate, image_bits);
+    }
+    return false;
+}
+
 bool            WaitForConnection(CameraHandle camera, float timeout)
 {
     Camera* target = static_cast<Camera*>(camera);

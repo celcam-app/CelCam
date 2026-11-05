@@ -166,15 +166,38 @@ float readRememberedFramerate()
     return static_cast<float>(value);
 }
 
-AM_MEDIA_TYPE* makeMediaType(int width, int height, float framerate)
+AM_MEDIA_TYPE* makeMediaType(const softcam::CameraFormat& format)
 {
     AM_MEDIA_TYPE *amt = allocateMediaType();
     if (!amt)
     {
         return nullptr;
     }
-    fillMediaType(amt, width, height, framerate);
+    fillMediaType(amt, format.m_width, format.m_height, format.m_framerate);
     return amt;
+}
+
+// CelCam: primero el formato actual (el que usa una app que no elige), después los habituales.
+// Solo dicen qué puede pedir cada app: el filtro adapta el tamaño, y los cuadros llegan cuando llegan.
+std::vector<softcam::CameraFormat> makeFormats(const softcam::CameraFormat& current)
+{
+    const int sizes[][2] = {
+        { 1920, 1080 }, { 1280, 720 }, { 960, 540 }, { 856, 480 }, { 640, 480 }, { 640, 360 }, { 320, 240 },
+    };
+    const float framerates[] = { 30.0f, 60.0f, 120.0f };
+
+    std::vector<softcam::CameraFormat> formats{ current };
+    for (const auto& size : sizes)
+    {
+        for (float framerate : framerates)
+        {
+            if (size[0] != current.m_width || size[1] != current.m_height || framerate != current.m_framerate)
+            {
+                formats.push_back(softcam::CameraFormat{ size[0], size[1], framerate });
+            }
+        }
+    }
+    return formats;
 }
 
 } //namespace
@@ -197,9 +220,12 @@ Softcam::Softcam(LPUNKNOWN lpunk, const GUID& clsid, HRESULT *phr) :
     CSource(NAME("DirectShow Softcam"), lpunk, clsid),
     m_frame_buffer(FrameBuffer::open()),
     m_valid(true),
-    m_width(m_frame_buffer ? m_frame_buffer.width() : readRememberedSize(L"Ancho", 1280)),
-    m_height(m_frame_buffer ? m_frame_buffer.height() : readRememberedSize(L"Alto", 720)),
-    m_framerate(m_frame_buffer ? m_frame_buffer.framerate() : readRememberedFramerate())
+    m_format{
+        m_frame_buffer ? m_frame_buffer.width() : readRememberedSize(L"Ancho", 1280),
+        m_frame_buffer ? m_frame_buffer.height() : readRememberedSize(L"Alto", 720),
+        m_frame_buffer ? m_frame_buffer.framerate() : readRememberedFramerate()
+    },
+    m_formats(makeFormats(m_format))
 {
     // CelCam: no retener la memoria compartida mientras no se transmite. Si no, una app
     // que solo enumera cámaras impediría que el programa vuelva a crearla al reabrirse.
@@ -247,11 +273,11 @@ Softcam::SetFormat(AM_MEDIA_TYPE *mt)
         LOG("-> E_FAIL (invalid media type)\n");
         return E_FAIL;
     }
+    CameraFormat requested = format();
     if (mt->formattype == FORMAT_VideoInfo && mt->pbFormat)
     {
         VIDEOINFOHEADER* pFormat = (VIDEOINFOHEADER*)mt->pbFormat;
-        if (pFormat->bmiHeader.biWidth != m_width ||
-            pFormat->bmiHeader.biHeight != m_height)
+        if (!supports(pFormat->bmiHeader.biWidth, pFormat->bmiHeader.biHeight))
         {
             LOG("-> E_FAIL (invalid dimension)\n");
             return E_FAIL;
@@ -262,6 +288,23 @@ Softcam::SetFormat(AM_MEDIA_TYPE *mt)
             LOG("-> E_FAIL (invalid color format)\n");
             return E_FAIL;
         }
+        requested.m_width = pFormat->bmiHeader.biWidth;
+        requested.m_height = pFormat->bmiHeader.biHeight;
+        if (pFormat->AvgTimePerFrame > 0)
+        {
+            requested.m_framerate = 10000000.0f / (float)pFormat->AvgTimePerFrame;
+        }
+    }
+    const CameraFormat current = format();
+    if (GetPin(0)->IsConnected() &&
+        (requested.m_width != current.m_width || requested.m_height != current.m_height))
+    {
+        LOG("-> VFW_E_ALREADY_CONNECTED\n");
+        return VFW_E_ALREADY_CONNECTED;
+    }
+    {
+        CAutoLock lock(&m_critsec);
+        m_format = requested;
     }
     LOG("-> S_OK\n");
     return S_OK;
@@ -280,7 +323,7 @@ Softcam::GetFormat(AM_MEDIA_TYPE **out_pmt)
         LOG("-> E_FAIL\n");
         return E_FAIL;
     }
-    AM_MEDIA_TYPE* mt = makeMediaType(m_width, m_height, m_framerate);
+    AM_MEDIA_TYPE* mt = makeMediaType(format());
     if (!mt)
     {
         LOG("-> E_OUTOFMEMORY\n");
@@ -304,7 +347,7 @@ Softcam::GetNumberOfCapabilities(int *out_count, int *out_size)
         LOG("-> E_FAIL\n");
         return E_FAIL;
     }
-    *out_count = 1;
+    *out_count = (int)m_formats.size();
     *out_size = sizeof(VIDEO_STREAM_CONFIG_CAPS);
     LOG("-> S_OK\n");
     return S_OK;
@@ -323,12 +366,13 @@ Softcam::GetStreamCaps(int index, AM_MEDIA_TYPE **out_pmt, BYTE *out_scc)
         LOG("-> E_FAIL\n");
         return E_FAIL;
     }
-    if (index >= 1)
+    if (index < 0 || index >= (int)m_formats.size())
     {
         LOG("-> S_FALSE (invalid index)\n");
         return S_FALSE;
     }
-    AM_MEDIA_TYPE *mt = makeMediaType(m_width, m_height, m_framerate);
+    const CameraFormat& offered = m_formats[index];
+    AM_MEDIA_TYPE *mt = makeMediaType(offered);
     if (!mt)
     {
         LOG("-> E_OUTOFMEMORY\n");
@@ -338,16 +382,17 @@ Softcam::GetStreamCaps(int index, AM_MEDIA_TYPE **out_pmt, BYTE *out_scc)
     std::memset(out_scc, 0, sizeof(VIDEO_STREAM_CONFIG_CAPS));
     VIDEOINFOHEADER* format = (VIDEOINFOHEADER*)mt->pbFormat;
     VIDEO_STREAM_CONFIG_CAPS* scc = (VIDEO_STREAM_CONFIG_CAPS*)out_scc;
+    const SIZE size{offered.m_width, offered.m_height};
     scc->guid = FORMAT_VideoInfo;
-    scc->InputSize = SIZE{m_width, m_height};
-    scc->MinCroppingSize = SIZE{m_width, m_height};
-    scc->MaxCroppingSize = SIZE{m_width, m_height};
+    scc->InputSize = size;
+    scc->MinCroppingSize = size;
+    scc->MaxCroppingSize = size;
     scc->CropGranularityX = 1;
     scc->CropGranularityY = 1;
     scc->CropAlignX = 1;
     scc->CropAlignY = 1;
-    scc->MinOutputSize = SIZE{m_width, m_height};
-    scc->MaxOutputSize = SIZE{m_width, m_height};
+    scc->MinOutputSize = size;
+    scc->MaxOutputSize = size;
     scc->OutputGranularityX = 1;
     scc->OutputGranularityY = 1;
     scc->StretchTapsX = 0;
@@ -373,12 +418,9 @@ FrameBuffer* Softcam::getFrameBuffer()
     CAutoLock lock(&m_critsec);
     if (!m_frame_buffer)
     {
+        // CelCam: sirve cualquier formato: la imagen se adapta al tamaño que negoció la app.
         auto fb = FrameBuffer::open();
-        if (fb &&
-            fb.active() &&
-            fb.width() == m_width &&
-            fb.height() == m_height &&
-            fb.framerate() == m_framerate)
+        if (fb && fb.active())
         {
             m_frame_buffer = fb;
         }
@@ -400,13 +442,29 @@ Softcam::releaseFrameBuffer()
     m_frame_buffer.release();
 }
 
+CameraFormat
+Softcam::format()
+{
+    CAutoLock lock(&m_critsec);
+    return m_format;
+}
+
+bool
+Softcam::supports(int width, int height) const
+{
+    return std::any_of(m_formats.begin(), m_formats.end(), [&](const CameraFormat& format)
+    {
+        return format.m_width == width && format.m_height == height;
+    });
+}
+
 SoftcamStream::SoftcamStream(HRESULT *phr,
                          Softcam *pParent,
                          LPCWSTR pPinName) :
     CSourceStream(NAME("DirectShow Softcam Stream"), phr, pParent, pPinName),
     m_valid(pParent->valid()),
-    m_width(pParent->width()),
-    m_height(pParent->height())
+    m_width(pParent->format().m_width),
+    m_height(pParent->format().m_height)
 {
 }
 
@@ -451,7 +509,7 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
         if (auto fb = getParent()->getFrameBuffer())
         {
             bool active = fb->waitForNewFrame(m_frame_counter);
-            fb->transferToDIB(pData, &m_frame_counter);
+            fb->transferToDIB(pData, m_width, m_height, m_scale_buffer, &m_frame_counter);
 
             if (!active)
             {
@@ -489,10 +547,19 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
             }
         }
 
+        // CelCam: la hora real de cada cuadro. Con un contador fijo, un celular más lento o más
+        // rápido que lo anunciado haría que el tiempo de la app se separe del real.
         CAutoLock lock(&m_critsec);
-        CRefTime start = m_sample_time;
-        m_sample_time += (LONG)m_interval_time_msec;
-        pms->SetTime((REFERENCE_TIME*)&start,(REFERENCE_TIME*)&m_sample_time);
+        REFERENCE_TIME start = m_sample_time;
+        CRefTime now;
+        const bool running = getParent()->running() && m_pFilter->StreamTime(now) == S_OK;
+        if (running && now.m_time > start)
+        {
+            start = now.m_time;
+        }
+        REFERENCE_TIME stop = start + m_frame_time;
+        m_sample_time = running ? start + 1 : stop;
+        pms->SetTime(&start, &stop);
     }
     pms->SetSyncPoint(TRUE);
     //LOG("-> NOERROR\n");
@@ -502,12 +569,7 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
 
 STDMETHODIMP SoftcamStream::Notify(IBaseFilter * pSender, Quality q)
 {
-    CAutoLock lock(&m_critsec);
-    m_interval_time_msec = m_interval_time_msec * 1000 / (std::max)(q.Proportion, 1L);
-    m_interval_time_msec = (std::min)((std::max)(m_interval_time_msec, 1L), 1000L);
-    if (q.Late > 0) {
-        m_sample_time += q.Late;
-    }
+    // CelCam: los cuadros llegan en tiempo real: no se pueden adelantar ni atrasar.
     //LOG("-> NOERROR\n");
     return NOERROR;
 }
@@ -530,8 +592,33 @@ HRESULT SoftcamStream::GetMediaType(CMediaType *pmt)
         return E_OUTOFMEMORY;
     }
 
-    fillMediaType(pmt, getParent()->width(), getParent()->height(), getParent()->framerate());
+    const CameraFormat format = getParent()->format();
+    fillMediaType(pmt, format.m_width, format.m_height, format.m_framerate);
 
+    LOG("-> NOERROR\n");
+    return NOERROR;
+}
+
+HRESULT SoftcamStream::CheckMediaType(const CMediaType *pMediaType)
+{
+    CheckPointer(pMediaType,E_POINTER);
+
+    if (*pMediaType->Type() != MEDIATYPE_Video ||
+        *pMediaType->Subtype() != MEDIASUBTYPE_RGB24 ||
+        *pMediaType->FormatType() != FORMAT_VideoInfo ||
+        pMediaType->Format() == nullptr)
+    {
+        LOG("-> E_FAIL (invalid media type)\n");
+        return E_FAIL;
+    }
+    const VIDEOINFOHEADER *pvi = (const VIDEOINFOHEADER*)pMediaType->Format();
+    if (pvi->bmiHeader.biBitCount != 24 ||
+        pvi->bmiHeader.biCompression != BI_RGB ||
+        !getParent()->supports(pvi->bmiHeader.biWidth, pvi->bmiHeader.biHeight))
+    {
+        LOG("-> E_FAIL (invalid format)\n");
+        return E_FAIL;
+    }
     LOG("-> NOERROR\n");
     return NOERROR;
 }
@@ -545,9 +632,9 @@ HRESULT SoftcamStream::DecideBufferSize(IMemAllocator *pAlloc,
     CAutoLock lock(m_pFilter->pStateLock());
     HRESULT hr = NOERROR;
 
-    VIDEOINFO *pvi = (VIDEOINFO *)m_mt.Format();
+    VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER *)m_mt.Format();
     pProperties->cBuffers = 1;
-    pProperties->cbBuffer = (long)pvi->bmiHeader.biSizeImage;
+    pProperties->cbBuffer = (long)calcDIBSize(pvi->bmiHeader.biWidth, pvi->bmiHeader.biHeight);
 
     ALLOCATOR_PROPERTIES actual;
     hr = pAlloc->SetProperties(pProperties, &actual);
@@ -568,14 +655,13 @@ HRESULT SoftcamStream::DecideBufferSize(IMemAllocator *pAlloc,
 HRESULT SoftcamStream::OnThreadCreate()
 {
     CAutoLock lock(&m_critsec);
+    const VIDEOINFOHEADER *pvi = (const VIDEOINFOHEADER*)m_mt.Format();
+    m_width = pvi->bmiHeader.biWidth;
+    m_height = pvi->bmiHeader.biHeight;
+    m_frame_time = pvi->AvgTimePerFrame > 0 ? pvi->AvgTimePerFrame : 333333;
     m_sample_time = 0;
-    float framerate = getParent()->framerate();
-    if (framerate <= 0.0f)
-    {
-        framerate = 30.0f;
-    }
-    framerate = (std::min)((std::max)(framerate, 1.0f), 1000.0f);
-    m_interval_time_msec = (long)std::round(1000.0f / framerate);
+    // Una imagen guardada de otra conexión puede tener otro tamaño.
+    m_screenshot.reset();
 
     LOG("-> NOERROR\n");
     return NOERROR;

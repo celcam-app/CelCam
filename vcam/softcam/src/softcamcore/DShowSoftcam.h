@@ -1,11 +1,20 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 #include <baseclasses/streams.h>
 #include "FrameBuffer.h"
 
 
 namespace softcam {
+
+
+struct CameraFormat
+{
+    int     m_width;
+    int     m_height;
+    float   m_framerate;
+};
 
 
 class Softcam : public CSource, public IAMStreamConfig
@@ -28,18 +37,17 @@ public:
 
     FrameBuffer*    getFrameBuffer();
     bool            valid() const { return m_valid; }
-    int             width() const { return m_width; }
-    int             height() const { return m_height; }
-    float           framerate() const { return m_framerate; }
+    CameraFormat    format();
+    bool            supports(int width, int height) const;
+    bool            running() const { return m_State == State_Running; }
     void            releaseFrameBuffer();
 
 private:
     CCritSec    m_critsec;
     FrameBuffer m_frame_buffer;
     const bool  m_valid;
-    const int   m_width;
-    const int   m_height;
-    const float m_framerate;
+    CameraFormat m_format;
+    std::vector<CameraFormat> m_formats;
 
     Softcam(LPUNKNOWN lpunk, const GUID& clsid, HRESULT *phr);
 };
@@ -66,6 +74,7 @@ class SoftcamStream : public CSourceStream, public IKsPropertySet, public IAMStr
     // CSourceStream
     HRESULT FillBuffer(IMediaSample *pms) override;
     HRESULT GetMediaType(CMediaType *pMediaType) override;
+    HRESULT CheckMediaType(const CMediaType *pMediaType) override;
     HRESULT OnThreadCreate(void) override;
 
     //  IKsPropertySet
@@ -86,14 +95,16 @@ class SoftcamStream : public CSourceStream, public IKsPropertySet, public IAMStr
 
 private:
     const bool  m_valid;
-    const int   m_width;
-    const int   m_height;
+    // Lo que negoció la app conectada.
+    int         m_width;
+    int         m_height;
+    REFERENCE_TIME m_frame_time = 333333;
     uint64_t    m_frame_counter = 0;
     std::unique_ptr<uint8_t[]>  m_screenshot;
+    std::vector<uint8_t>        m_scale_buffer;
 
     CCritSec m_critsec;
-    CRefTime m_sample_time;
-    long m_interval_time_msec = 10;
+    REFERENCE_TIME m_sample_time = 0;
 
     Softcam*        getParent();
 };

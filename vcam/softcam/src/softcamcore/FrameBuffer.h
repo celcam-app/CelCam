@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 #include "Misc.h"
 #include "Watchdog.h"
 
@@ -37,7 +38,16 @@ class FrameBuffer
 
     void            deactivate();
     void            write(const void* image_bits);
+    // CelCam: cambia el formato sin recrear la memoria. Si no hay imagen, queda en negro.
+    bool            setFormat(int width, int height, float framerate, const void* image_bits);
     void            transferToDIB(void* image_bits, uint64_t* out_frame_counter);
+    // CelCam: lo mismo, adaptando la imagen al tamaño que negoció la app.
+    void            transferToDIB(
+                        void*                   image_bits,
+                        int                     dest_width,
+                        int                     dest_height,
+                        std::vector<uint8_t>&   scratch,
+                        uint64_t*               out_frame_counter);
     bool            waitForNewFrame(uint64_t frame_counter, float time_out = 0.5f);
 
     void            release();

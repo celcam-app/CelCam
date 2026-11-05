@@ -2,7 +2,7 @@
 ; Lo arma scripts\construir.ps1 con lo que deja en pc\dist\CelCam y pc\stage.
 
 #define AppName "CelCam"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 
 [Setup]
 AppId={{C5E1F0A2-6D47-4B3E-9A18-2F7C4D9E6B10}

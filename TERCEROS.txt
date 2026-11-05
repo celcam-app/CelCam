@@ -18,6 +18,9 @@ Incluidos en el programa de PC
   segno - BSD-3-Clause
   cryptography - Apache-2.0 o BSD-3-Clause
   psutil - BSD-3-Clause
+  pystray - LGPL-3.0-or-later
+    https://github.com/moses-palmer/pystray
+  six - MIT
 
 Incluidos en la app de Android
   AndroidX - Apache-2.0

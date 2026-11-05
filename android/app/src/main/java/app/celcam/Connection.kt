@@ -36,6 +36,7 @@ data class EncodedFrame(val data: ByteArray, val key: Boolean, val ptsUs: Long, 
 /** Conexión TLS con la PC. El mismo protocolo que pc/celcam/protocol.py. */
 class Connection private constructor(
     private val socket: Socket,
+    private val plain: Socket,
     private val input: DataInputStream,
     private val output: DataOutputStream,
     val config: StreamConfig,
@@ -80,6 +81,11 @@ class Connection private constructor(
     /** Cerrar TLS manda un aviso por la red: no puede hacerse en el hilo principal ni trabar a quien llama. */
     fun close() {
         thread(name = "celcam-cierre", isDaemon = true) { closeQuietly(socket) }
+    }
+
+    /** Para una conexión que ya falló: destraba enseguida a quien esté enviando, sin aviso de cierre. */
+    fun abort() {
+        thread(name = "celcam-corte", isDaemon = true) { closeQuietly(plain) }
     }
 
     companion object {
@@ -206,7 +212,7 @@ class Connection private constructor(
             if (!reply.optBoolean("ok")) throw RejectedException(reply.optString("error"))
             tls.soTimeout = READ_TIMEOUT_MS
             val config = StreamConfig(reply.getInt("w"), reply.getInt("h"), reply.getInt("fps"), reply.getInt("kbps"))
-            return Connection(tls, input, output, config, reply.optString("pc", pairing.pcName))
+            return Connection(tls, plain, input, output, config, reply.optString("pc", pairing.pcName))
         }
 
         private fun closeQuietly(socket: Socket) {

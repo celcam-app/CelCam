@@ -5,9 +5,11 @@ import socket
 import ssl
 import time
 
+import numpy as np
 import pytest
 
-from celcam.core import Core
+from celcam import core as core_module
+from celcam.core import Core, resize_image
 from celcam.protocol import ConnectionClosed
 from celcam.server import Listener, StreamConfig, StreamServer
 from celcam.settings import Settings
@@ -170,6 +172,94 @@ def test_de_punta_a_punta_con_imagen_de_espera(identity):
         assert (camera.frames[-1] == waiting).all()
     finally:
         core.stop()
+
+
+def _stream_a_little(core, identity):
+    phone = FakePhone(core.server.port, identity.token)
+    assert wait_for(lambda: core.status().connected)
+    for index, packet in enumerate(encode_h264(320, 180, 10)):
+        phone.send_video(packet, key=index == 0)
+    assert wait_for(lambda: core.latest_image() is not None)
+    return phone
+
+
+def test_un_corte_de_la_red_no_muestra_la_imagen_de_espera(identity, monkeypatch):
+    monkeypatch.setattr(core_module, "HOLD_LAST_IMAGE", 1.5)
+    camera = FakeCamera(856, 480)
+    core = _core(identity, camera)
+    core.start()
+    try:
+        phone = _stream_a_little(core, identity)
+        # Lo que hace el Wi-Fi cuando daña un dato: al descifrarlo, la conexión se cae.
+        socket.socket.send(phone.sock, b"\x17\x03\x03\x00\x40" + b"\xaa" * 64)
+        assert wait_for(lambda: not core.status().connected)
+        camera.frames.clear()
+        time.sleep(0.7)
+        assert not camera.frames
+        # Si no vuelve, recién ahí aparece la imagen de espera.
+        assert wait_for(lambda: camera.frames, timeout=3)
+        phone.close()
+    finally:
+        core.stop()
+
+
+def test_detener_en_el_celular_saca_su_imagen_enseguida(identity):
+    camera = FakeCamera(856, 480)
+    core = _core(identity, camera)
+    core.start()
+    try:
+        phone = _stream_a_little(core, identity)
+        phone.close()
+        assert wait_for(lambda: not core.status().connected)
+        camera.frames.clear()
+        assert wait_for(lambda: camera.frames, timeout=1)
+    finally:
+        core.stop()
+
+
+class ChangingCamera(FakeCamera):
+    def open(self, width, height, fps, image=None):
+        self.size = (width, height)
+        self.opened = (width, height, fps, image)
+
+
+def test_cambiar_de_calidad_conserva_la_imagen_actual(identity):
+    camera = ChangingCamera(856, 480)
+    core = _core(identity, camera)
+    core.start()
+    try:
+        phone = _stream_a_little(core, identity)
+        current = core.latest_image()
+        core.set_quality("720p")
+        width, height, fps, image = camera.opened
+        assert (width, height, fps) == (1280, 720, 30)
+        assert image.shape == (720, 1280, 3)
+        assert (image == resize_image(current, 1280, 720)).all()
+        phone.close()
+    finally:
+        core.stop()
+
+
+def test_cambiar_de_calidad_sin_celular_muestra_la_imagen_de_espera(identity):
+    camera = ChangingCamera(856, 480)
+    core = _core(identity, camera)
+    core.start()
+    try:
+        core.set_fps(60)
+        width, height, fps, image = camera.opened
+        assert (width, height, fps) == (856, 480, 60)
+        assert (image == core_module.make_placeholder(856, 480, "CelCam", "Esperando al celular…")).all()
+    finally:
+        core.stop()
+
+
+def test_resize_image_mantiene_cada_esquina():
+    image = np.zeros((4, 8, 3), dtype=np.uint8)
+    image[:2, :4] = (1, 1, 1)
+    image[2:, 4:] = (2, 2, 2)
+    small = resize_image(image, 4, 2)
+    assert small.shape == (2, 4, 3)
+    assert (small[0, 0] == 1).all() and (small[-1, -1] == 2).all()
 
 
 def test_datos_danados_no_cortan_la_sesion(identity):

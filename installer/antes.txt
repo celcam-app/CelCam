@@ -6,4 +6,6 @@
 
 Todo esto se quita al desinstalar CelCam.
 
+Si CelCam ya está abierto, ciérralo antes de seguir: clic derecho en su ícono junto al reloj y elige «Salir».
+
 Tu video va directo del celular a esta PC. CelCam no lo envía a Internet.

@@ -52,7 +52,7 @@ if ($Pasos -contains 'programa') {
     Push-Location "$raiz\pc"
     try {
         & $python -m PyInstaller --noconfirm --clean --windowed --name CelCam --icon "$stage\celcam.ico" `
-            --version-file version_info.txt --collect-all customtkinter --collect-submodules av --paths . celcam_inicio.py
+            --version-file version_info.txt --collect-all customtkinter --collect-submodules av --hidden-import pystray._win32 --paths . celcam_inicio.py
         Revisar "empaquetar el programa"
     } finally { Pop-Location }
 }

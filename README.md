@@ -16,12 +16,17 @@ USB cable. Nothing goes through a server.
 - Connect by scanning a QR code, or with a USB cable
 - Front and rear cameras, zoom, flashlight, rotate and mirror
 - The stream keeps running with the phone's screen off
+- Closing the window keeps CelCam running, with an icon next to the clock
+- Change quality or frame rate while an app is using the camera, without choosing it again
 - Video is encrypted between the phone and the PC, and the PC only accepts phones that scanned its QR code
+
+Tested with OBS Studio, Discord and Microsoft Edge. Other apps that use DirectShow cameras should see it too.
 
 **Limits:** video only (use your PC or headset microphone). Windows 10 or 11, 64-bit. Android 7 or newer. No iPhone
 version. The Windows Camera app may not show the camera, because it does not list this type of virtual camera.
 
-**Status:** first version, still being tested on real phones and PCs.
+**Status:** early version, still being tested on real phones and PCs. Each build runs the real installer on a clean
+Windows machine and checks the camera with a simulated phone.
 
 ## Install
 
@@ -89,8 +94,14 @@ cuentas. El video va directo del celular a tu PC, por WiFi o por cable USB, sin 
 3. En el celular, abre la app, toca «Escanear código» y apunta al código de la PC.
 4. En tu app de video, elige la cámara «CelCam».
 
+**Con qué funciona:** se probó con OBS Studio, Discord y Microsoft Edge. Las demás apps que usan cámaras DirectShow
+también deberían verla. La app Cámara de Windows y las de la Tienda todavía no la ven.
+
+**Para cerrarla:** con la X, CelCam sigue funcionando con un ícono junto al reloj. Para cerrarla del todo, abre ese
+ícono y elige «Salir».
+
 **Límites:** solo video (usa el micrófono de la PC o de tus auriculares). Windows 10 u 11 de 64 bits y Android 7 o
-posterior. No hay versión para iPhone. Es una primera versión y todavía se está probando.
+posterior. No hay versión para iPhone. Es una versión nueva y todavía se está probando.
 
 **Aviso:** las versiones actuales no tienen firma digital, así que Windows muestra una advertencia, y las PC con
 Windows 11 que tienen activado Control inteligente de aplicaciones las bloquean.

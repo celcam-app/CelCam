@@ -1,15 +1,92 @@
 #include "FrameBuffer.h"
 
 #include <windows.h>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <mutex> // lock_guard
+
+
+namespace {
+
+void copyToDIB(const std::uint8_t* image, int w, int h, void* image_bits)
+{
+    int gap = ((w * 3 + 3) & ~3) - w * 3;
+    std::uint8_t* dest = (std::uint8_t*)image_bits;
+    for (int y = 0; y < h; y++)
+    {
+        const std::uint8_t* src = image + 3 * w * (h - 1 - y);
+        std::memcpy(dest, src, 3 * (std::uint32_t)w);
+        dest += 3 * w + gap;
+    }
+}
+
+struct ScaleStep
+{
+    int     m_index;
+    int     m_weight; // de 0 a 256, hacia el píxel siguiente
+};
+
+std::vector<ScaleStep> makeScaleSteps(int source, int target)
+{
+    std::vector<ScaleStep> steps(target);
+    for (int i = 0; i < target; i++)
+    {
+        const double position = (std::max)(0.0, (i + 0.5) * source / target - 0.5);
+        const int index = (std::min)((int)position, source - 2);
+        steps[i] = ScaleStep{ index, (int)((position - index) * 256) };
+    }
+    return steps;
+}
+
+// Escala bilineal, con la imagen entera y centrada. Lo que sobra queda como está:
+// quien llama ya dejó el DIB en negro.
+void scaleToDIB(const std::uint8_t* image, int w, int h, void* image_bits, int dest_w, int dest_h)
+{
+    const double scale = (std::min)((double)dest_w / w, (double)dest_h / h);
+    const int target_w = (std::min)(dest_w, (int)std::lround(w * scale));
+    const int target_h = (std::min)(dest_h, (int)std::lround(h * scale));
+    const int offset_x = (dest_w - target_w) / 2;
+    const int offset_y = (dest_h - target_h) / 2;
+    const int stride = (dest_w * 3 + 3) & ~3;
+    const auto columns = makeScaleSteps(w, target_w);
+    const auto rows = makeScaleSteps(h, target_h);
+    for (int y = 0; y < target_h; y++)
+    {
+        const std::uint8_t* upper = image + 3 * w * rows[y].m_index;
+        const std::uint8_t* lower = upper + 3 * w;
+        const int weight_y = rows[y].m_weight;
+        // El DIB va de abajo hacia arriba.
+        std::uint8_t* dest = (std::uint8_t*)image_bits + stride * (dest_h - 1 - offset_y - y) + 3 * offset_x;
+        for (int x = 0; x < target_w; x++)
+        {
+            const int from = 3 * columns[x].m_index;
+            const int weight_x = columns[x].m_weight;
+            for (int c = 0; c < 3; c++)
+            {
+                const int top = upper[from + c] * (256 - weight_x) + upper[from + 3 + c] * weight_x;
+                const int bottom = lower[from + c] * (256 - weight_x) + lower[from + 3 + c] * weight_x;
+                dest[c] = (std::uint8_t)((top * (256 - weight_y) + bottom * weight_y + (1 << 15)) >> 16);
+            }
+            dest += 3;
+        }
+    }
+}
+
+} //namespace
 
 
 namespace softcam {
 
 
-const char NamedMutexName[] = "CelCam/NamedMutex";
-const char SharedMemoryName[] = "CelCam/SharedMemory";
+// CelCam: el «2» es por el cambio de formato en marcha. Un filtro de la versión anterior que siga
+// cargado en una app no conoce eso y escribiría de más: con otro nombre, no se engancha.
+const char NamedMutexName[] = "CelCam/2/NamedMutex";
+const char SharedMemoryName[] = "CelCam/2/SharedMemory";
 const uint8_t ProtocolVersion = 2;
+// CelCam: la calidad más alta que ofrece el programa.
+const uint16_t MaxWidth = 1920;
+const uint16_t MaxHeight = 1080;
 
 
 struct FrameBuffer::Header
@@ -51,7 +128,10 @@ FrameBuffer FrameBuffer::create(
         return fb;
     }
 
-    auto shmem_size = calcMemorySize((uint16_t)width, (uint16_t)height);
+    // CelCam: con lugar para la calidad más alta, el formato puede cambiar sin recrear la memoria.
+    auto shmem_size = (std::max)(
+            calcMemorySize((uint16_t)width, (uint16_t)height),
+            calcMemorySize(MaxWidth, MaxHeight));
     fb.m_shmem = SharedMemory::create(SharedMemoryName, shmem_size);
     if (fb.m_shmem)
     {
@@ -234,6 +314,35 @@ void FrameBuffer::write(const void* image_bits)
     frame->m_frame_counter += 1;
 }
 
+bool FrameBuffer::setFormat(int width, int height, float framerate, const void* image_bits)
+{
+    if (!m_shmem || !checkDimensions(width, height) || framerate < 0.0f)
+    {
+        return false;
+    }
+    if (calcMemorySize((uint16_t)width, (uint16_t)height) > m_shmem.size())
+    {
+        return false;
+    }
+    // Todo junto: quien lee nunca ve el tamaño nuevo con la imagen vieja.
+    std::lock_guard<NamedMutex> lock(m_mutex);
+    auto frame = header();
+    frame->m_width = (uint16_t)width;
+    frame->m_height = (uint16_t)height;
+    frame->m_framerate = framerate;
+    const std::size_t image_size = (std::size_t)3 * width * height;
+    if (image_bits)
+    {
+        std::memcpy(frame->imageData(), image_bits, image_size);
+    }
+    else
+    {
+        std::memset(frame->imageData(), 0, image_size);
+    }
+    frame->m_frame_counter += 1;
+    return true;
+}
+
 void FrameBuffer::transferToDIB(void* image_bits, uint64_t* out_frame_counter)
 {
     if (!m_shmem)
@@ -244,20 +353,41 @@ void FrameBuffer::transferToDIB(void* image_bits, uint64_t* out_frame_counter)
     std::lock_guard<NamedMutex> lock(m_mutex);
 
     auto frame = header();
+    copyToDIB(frame->imageData(), frame->m_width, frame->m_height, image_bits);
+    *out_frame_counter = frame->m_frame_counter;
+}
+
+void FrameBuffer::transferToDIB(
+                        void*                   image_bits,
+                        int                     dest_width,
+                        int                     dest_height,
+                        std::vector<uint8_t>&   scratch,
+                        uint64_t*               out_frame_counter)
+{
+    if (!m_shmem)
     {
-        int w = frame->m_width;
-        int h = frame->m_height;
-        int gap = ((w * 3 + 3) & ~3) - w * 3;
-        const std::uint8_t* image = frame->imageData();
-        std::uint8_t* dest = (std::uint8_t*)image_bits;
-        for (int y = 0; y < h; y++)
-        {
-            const std::uint8_t* src = image + 3 * w * (h - 1 - y);
-            std::memcpy(dest, src, 3 * (uint32_t)w);
-            dest += 3 * w + gap;
-        }
-        *out_frame_counter = frame->m_frame_counter;
+        *out_frame_counter = 0;
+        return;
     }
+    int w = 0;
+    int h = 0;
+    {
+        std::lock_guard<NamedMutex> lock(m_mutex);
+
+        auto frame = header();
+        w = frame->m_width;
+        h = frame->m_height;
+        *out_frame_counter = frame->m_frame_counter;
+        if (w == dest_width && h == dest_height)
+        {
+            copyToDIB(frame->imageData(), w, h, image_bits);
+            return;
+        }
+        // Escalar lleva su tiempo: se hace afuera para no frenar al que manda los cuadros.
+        scratch.resize((std::size_t)3 * w * h);
+        std::memcpy(scratch.data(), frame->imageData(), scratch.size());
+    }
+    scaleToDIB(scratch.data(), w, h, image_bits, dest_width, dest_height);
 }
 
 bool FrameBuffer::waitForNewFrame(uint64_t frame_counter, float time_out)

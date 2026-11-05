@@ -172,6 +172,11 @@ extern "C" void     scSendFrame(scCamera camera, const void* image_bits)
     return softcam::sender::SendFrame(camera, image_bits);
 }
 
+extern "C" bool     scSetFormat(scCamera camera, int width, int height, float framerate, const void* image_bits)
+{
+    return softcam::sender::SetFormat(camera, width, height, framerate, image_bits);
+}
+
 extern "C" bool     scWaitForConnection(scCamera camera, float timeout)
 {
     return softcam::sender::WaitForConnection(camera, timeout);

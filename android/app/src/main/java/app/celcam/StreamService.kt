@@ -255,6 +255,8 @@ class StreamService : Service() {
             while (!stopping) handleCommand(conn, conn.readControl())
         } finally {
             sender.interrupt()
+            // Si se cayó la conexión, un envío trabado demoraría la reconexión.
+            if (!stopping) conn.abort()
             sender.join(STOP_WAIT_MS)
         }
     }
@@ -271,7 +273,6 @@ class StreamService : Service() {
                 )
                 targetBitrate = config.kbps * 1000
                 currentBitrate = targetBitrate
-                queueLimit = queueLimitFor(config.fps)
                 capture.applyConfig(config, currentBitrate)
             }
             "bye" -> throw ReplacedException()
@@ -306,11 +307,15 @@ class StreamService : Service() {
         if (waitingForKey && !key) return
         waitingForKey = false
         val frame = EncodedFrame(data, key, ptsUs, quarterTurns())
-        if (queue.size >= queueLimit || !queue.offer(frame)) {
+        val waiting = queue.size
+        if (waiting >= queueLimit || !queue.offer(frame)) {
             // La red no da abasto: se tira lo acumulado y se sigue desde la próxima imagen completa.
             queue.clear()
             waitingForKey = true
             capture.requestKeyFrame()
+            lowerBitrate()
+        } else if (waiting >= queueLimit / 2 && SystemClock.elapsedRealtime() - lastCongestion >= EARLY_LOWER_MS) {
+            // Mejor bajar antes de llegar a tirar cuadros: tirarlos corta la imagen y la imagen completa pesa más.
             lowerBitrate()
         }
     }
@@ -343,6 +348,8 @@ class StreamService : Service() {
 
     @Synchronized
     private fun onCaptureInfo(info: CaptureInfo) {
+        // Según los cuadros que da la cámara, no los pedidos: si no, la cola guarda mucho más tiempo de lo previsto.
+        queueLimit = queueLimitFor(info.fps)
         publish(state.copy(capture = info))
         pendingReport.set(
             JSONObject()
@@ -398,10 +405,11 @@ class StreamService : Service() {
         private const val EXTRA_LINK = "enlace"
         private const val CHANNEL = "transmision"
         private const val NOTIFICATION_ID = 1
-        private const val QUEUE_CAPACITY = 40
-        // Unos 270 ms de video, sea cual sea la velocidad.
-        private const val QUEUE_FRAMES_PER_15_FPS = 4
-        private const val MIN_QUEUE_FRAMES = 4
+        private const val QUEUE_CAPACITY = 64
+        // Unos 530 ms de video, sea cual sea la velocidad: en un Wi-Fi malo hay trabas de hasta 400 ms.
+        private const val QUEUE_FRAMES_PER_15_FPS = 8
+        private const val MIN_QUEUE_FRAMES = 8
+        private const val EARLY_LOWER_MS = 1000L
         private const val POLL_MS = 500L
         private const val PING_MS = 2000L
         private const val STOP_WAIT_MS = 1000L

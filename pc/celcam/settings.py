@@ -26,6 +26,8 @@ class Settings:
     mirror: bool = False
     extra_turns: int = 0
     fill: bool = False
+    # El aviso de que CelCam sigue abierta se muestra una sola vez.
+    hide_notice_shown: bool = False
 
     @property
     def size(self) -> tuple[int, int]:
@@ -51,6 +53,7 @@ class Settings:
             settings.fps = raw["fps"]
         settings.mirror = bool(raw.get("mirror", False))
         settings.fill = bool(raw.get("fill", False))
+        settings.hide_notice_shown = bool(raw.get("hide_notice_shown", False))
         turns = raw.get("extra_turns", 0)
         settings.extra_turns = turns % 4 if isinstance(turns, int) else 0
         return settings

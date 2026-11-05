@@ -77,6 +77,12 @@ jobs:
       - name: Build camera, app and PC program
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\construir.ps1 -Pasos camara,app,programa
 
+      - name: Test the compiled camera
+        working-directory: pc
+        env:
+          CELCAM_REGISTRAR_PRUEBA: '1'
+        run: python -m pytest -q -p no:cacheprovider tests/test_camara_real.py
+
       - name: Collect the files to sign
         if: env.SIGN == 'true'
         shell: pwsh
@@ -123,6 +129,36 @@ jobs:
 
       - name: Build the installer
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\construir.ps1 -Pasos instalador
+
+      - name: Run the installer
+        shell: pwsh
+        run: |
+          $installer = (Get-Item dist\CelCam-Instalador-*.exe).FullName
+          $setup = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=instalador.log' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) {
+            Get-Content instalador.log -Tail 40
+            throw "El instalador terminó con código $($setup.ExitCode)"
+          }
+
+      - name: Test the installed program
+        working-directory: pc
+        env:
+          CELCAM_INSTALADO: C:\Program Files\CelCam
+        run: python -m pytest -q -p no:cacheprovider tests/test_instalado.py
+
+      - name: Uninstall and check nothing is left
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:ProgramFiles 'CelCam'
+          Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          # El desinstalador sigue trabajando desde una copia temporal.
+          $deadline = (Get-Date).AddSeconds(90)
+          while ((Test-Path "$app\CelCam.exe") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+          if (Test-Path "$app\CelCam.exe") { throw 'El desinstalador no borró el programa' }
+          if (Test-Path 'Registry::HKEY_CLASSES_ROOT\CLSID\{7E2A6C14-9B3D-4F58-A1C6-5D0E8B7F3A21}') { throw 'La cámara sigue registrada' }
+          netsh advfirewall firewall show rule name=CelCam | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'Sigue la regla del firewall' }
+          exit 0
 
       - name: Upload the installer
         id: installer-unsigned

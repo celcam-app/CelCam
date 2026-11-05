@@ -45,7 +45,7 @@ class NullCamera:
     def __init__(self, width: int, height: int) -> None:
         self.size = (width, height)
 
-    def open(self, width: int, height: int, fps: int) -> None:
+    def open(self, width: int, height: int, fps: int, image: np.ndarray | None = None) -> None:
         self.size = (width, height)
 
     def send(self, image: np.ndarray) -> None:
@@ -63,6 +63,8 @@ class VirtualCamera:
         self._dll.scDeleteCamera.restype = None
         self._dll.scSendFrame.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         self._dll.scSendFrame.restype = None
+        self._dll.scSetFormat.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_void_p]
+        self._dll.scSetFormat.restype = ctypes.c_bool
         self._dll.scIsConnected.argtypes = [ctypes.c_void_p]
         self._dll.scIsConnected.restype = ctypes.c_bool
         self._lock = threading.Lock()
@@ -73,10 +75,18 @@ class VirtualCamera:
     def size(self) -> tuple[int, int]:
         return self._size
 
-    def open(self, width: int, height: int, fps: int, wait_seconds: float = 8.0) -> None:
+    def open(self, width: int, height: int, fps: int, wait_seconds: float = 8.0, image: np.ndarray | None = None) -> None:
+        """Abre la cámara o cambia su formato. `image` es la primera imagen en el formato nuevo."""
         remember_format(width, height, fps)
         with self._lock:
-            self._close_locked()
+            if self._camera is not None:
+                # Las apps que la tienen abierta siguen viéndola: el filtro adapta la imagen a cada una.
+                bits = image.ctypes.data if image is not None and image.shape == (height, width, 3) else None
+                if self._dll.scSetFormat(self._camera, width, height, float(fps), bits):
+                    self._size = (width, height)
+                    log.info("Cámara virtual en %dx%d a %d cuadros/s", width, height, fps)
+                    return
+                self._close_locked()
             # Una app que estaba usando la cámara tarda un momento en soltar la memoria compartida.
             deadline = time.monotonic() + wait_seconds
             while True:

@@ -23,8 +23,10 @@ from .usb import Adb
 log = logging.getLogger(__name__)
 
 PLACEHOLDER_INTERVAL = 0.5
-# Sin cuadros durante este tiempo, la cámara vuelve a la imagen de espera.
+# Sin cuadros durante este tiempo, la ventana deja de decir «Transmitiendo».
 STALE_AFTER = 2.0
+# Un corte corto no tiene que verse: la cámara sigue con la última imagen. Después, la de espera.
+HOLD_LAST_IMAGE = 10.0
 
 
 def make_placeholder(width: int, height: int, title: str, subtitle: str) -> np.ndarray:
@@ -39,6 +41,13 @@ def make_placeholder(width: int, height: int, title: str, subtitle: str) -> np.n
     draw.text((width / 2, height / 2 + height // 24), subtitle, font=small, fill=(150, 158, 171), anchor="mm")
     # PIL usa RGB; la cámara, BGR.
     return np.asarray(image, dtype=np.uint8)[:, :, ::-1].copy()
+
+
+def resize_image(image: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Alcanza para el momento que tarda el celular en mandar el formato nuevo."""
+    rows = np.arange(height) * image.shape[0] // height
+    columns = np.arange(width) * image.shape[1] // width
+    return image[rows][:, columns]
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,7 @@ class Core(Listener):
         self._pipeline: Pipeline | None = None
         self._pipeline_lock = threading.Lock()
         self._last_frame = 0.0
+        self._connected_at: float | None = None
         self._phone_fps = 0
         self._stopping = threading.Event()
         self._placeholder = np.empty(0)
@@ -70,7 +80,7 @@ class Core(Listener):
     # Arranque y apagado
 
     def start(self) -> None:
-        self._render_placeholder()
+        self._render_placeholder(self.camera.size)
         self.server.start()
         threading.Thread(target=self._placeholder_loop, name="celcam-espera", daemon=True).start()
 
@@ -101,7 +111,7 @@ class Core(Listener):
         with self._pipeline_lock:
             if self._pipeline:
                 self._pipeline.set_view(self._view())
-        self._save()
+        self.save_settings()
 
     def set_quality(self, quality: str) -> None:
         self.settings.quality = quality
@@ -112,18 +122,26 @@ class Core(Listener):
         self._apply_format()
 
     def _apply_format(self) -> None:
-        """Vuelve a crear la cámara. Las apps que la tenían abierta tienen que volver a elegirla."""
+        """Las apps que tienen la cámara abierta siguen viéndola, sin que nadie tenga que volver a elegirla."""
         width, height = self.settings.size
+        self._render_placeholder((width, height))
         reopen = getattr(self.camera, "open", None)
         if reopen:
-            reopen(width, height, self.settings.fps)
-        self._render_placeholder()
+            reopen(width, height, self.settings.fps, image=self._image_for_new_format(width, height))
         session = self.server.current()
         if session:
             session.send_control(self._stream_config().as_command())
-        self._save()
+        self.save_settings()
 
-    def _save(self) -> None:
+    def _image_for_new_format(self, width: int, height: int) -> np.ndarray:
+        with self._pipeline_lock:
+            pipeline = self._pipeline
+        image = pipeline.latest_image() if pipeline else None
+        if image is None or time.monotonic() - self._last_frame >= HOLD_LAST_IMAGE:
+            return self._placeholder
+        return resize_image(image, width, height)
+
+    def save_settings(self) -> None:
         if self._settings_path:
             self.settings.save(self._settings_path)
 
@@ -156,6 +174,7 @@ class Core(Listener):
 
     def on_connected(self, session: Session) -> None:
         self._phone_fps = 0
+        self._connected_at = time.monotonic()
         with self._pipeline_lock:
             self._pipeline = Pipeline(self.camera, self._view())
         session.send_control({"cmd": "key"})
@@ -187,18 +206,22 @@ class Core(Listener):
             session.send_control({"cmd": "key"})
             return
         self._last_frame = time.monotonic()
+        if self._connected_at is not None:
+            log.info("Primera imagen a los %d ms de conectar", (self._last_frame - self._connected_at) * 1000)
+            self._connected_at = None
 
     def on_disconnected(self, session: Session) -> None:
-        if self.server.current() is None:
+        # Si el celular cortó a propósito, su última imagen no queda a la vista.
+        # Si falló la red, se está por reconectar: mejor que no se note.
+        if self.server.current() is None and session.closed_by_phone:
             self._last_frame = 0.0
 
     # Imagen de espera
 
-    def _render_placeholder(self) -> None:
-        width, height = self.camera.size
-        self._placeholder = make_placeholder(width, height, "CelCam", "Esperando al celular…")
+    def _render_placeholder(self, size: tuple[int, int]) -> None:
+        self._placeholder = make_placeholder(size[0], size[1], "CelCam", "Esperando al celular…")
 
     def _placeholder_loop(self) -> None:
         while not self._stopping.wait(PLACEHOLDER_INTERVAL):
-            if time.monotonic() - self._last_frame >= STALE_AFTER:
+            if time.monotonic() - self._last_frame >= HOLD_LAST_IMAGE:
                 self.camera.send(self._placeholder)

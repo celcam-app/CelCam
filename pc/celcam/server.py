@@ -64,6 +64,8 @@ class Session:
         self._sock = sock
         self._outbox: queue.SimpleQueue[dict] = queue.SimpleQueue()
         self.retiring = False
+        # El celular cerró a propósito (por ejemplo, con «Detener»), no fue una falla de la red.
+        self.closed_by_phone = False
 
     def send_control(self, command: dict) -> None:
         self._outbox.put(command)
@@ -245,6 +247,7 @@ class StreamServer:
                         self._listener.on_capture(session, command)
         except (OSError, ValueError, ssl.SSLError, ProtocolError, ConnectionClosed) as exc:
             log.info("Sesión terminada (%s): %r", session.device, exc)
+            session.closed_by_phone = isinstance(exc, ConnectionClosed)
         finally:
             with self._lock:
                 is_current = self._session is session

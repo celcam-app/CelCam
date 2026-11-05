@@ -63,6 +63,21 @@ extern "C"
     void        SOFTCAM_API scSendFrame(scCamera camera, const void* image_bits);
 
     /*
+        CelCam: this function changes the format of the camera while it runs.
+
+        Applications that already have the camera open keep receiving the
+        size they negotiated, because the filter scales the image for them.
+
+        The `image_bits` argument is the first image in the new format. It is
+        stored together with the new size. If it is null, the image is black.
+
+        This function returns `true` if the format changed. It returns `false`
+        if the size is invalid or bigger than 1920x1080 (or than the size used
+        to create the camera, if that one is bigger).
+    */
+    bool        SOFTCAM_API scSetFormat(scCamera camera, int width, int height, float framerate, const void* image_bits);
+
+    /*
         This function waits until an application connects to the specified
         virtual camera.
 

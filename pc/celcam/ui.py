@@ -19,6 +19,7 @@ from .core import Core
 from .identity import Identity
 from .netinfo import local_hosts
 from .settings import FPS_OPTIONS, QUALITIES
+from .tray import ShowSignal, Tray
 from .usb import ADB_TERMS_URL, UsbError
 from .vcam import CameraBusy
 
@@ -38,6 +39,8 @@ WARN = "#FBBF24"
 PREVIEW_SIZE = (640, 360)
 PREVIEW_MS = 66
 STATUS_MS = 500
+REQUESTS_MS = 200
+BRING_TO_FRONT_MS = 200
 QR_PIXELS = 240
 
 
@@ -52,12 +55,13 @@ def qr_image(text: str, pixels: int) -> Image.Image:
 
 
 class Window(ctk.CTk):
-    def __init__(self, core: Core, camera_problem: str | None = None) -> None:
+    def __init__(self, core: Core, camera_problem: str | None = None, show_signal: ShowSignal | None = None) -> None:
         super().__init__(fg_color=BG)
         self.core = core
         self._apk_server: ApkServer | None = None
         self._last_link = ""
         self._was_connected = False
+        self._show_signal = show_signal
         self.title(f"{APP_NAME} {__version__}")
         self.geometry("1020x640")
         self.minsize(1020, 640)
@@ -65,6 +69,8 @@ class Window(ctk.CTk):
         icon = paths.install_dir() / "celcam.ico"
         if icon.exists():
             self.iconbitmap(str(icon))
+        self._tray = Tray(icon, APP_NAME)
+        self._has_tray = self._tray.start()
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self._build_preview()
@@ -73,6 +79,7 @@ class Window(ctk.CTk):
         self._refresh_link()
         self._tick_preview()
         self._tick_status()
+        self._tick_requests()
 
     # Armado de la ventana
 
@@ -153,7 +160,10 @@ class Window(ctk.CTk):
         self._connected_title.grid(row=0, column=0, sticky="ew")
         ctk.CTkLabel(
             self._connected_panel,
-            text="Ahora, en Zoom, Meet, Teams o Discord, elige la cámara «CelCam».",
+            text=(
+                "Ahora elige la cámara «CelCam» en Discord, Zoom, Meet o Teams.\n\n"
+                "En OBS: Fuentes > + > Dispositivo de captura de video > CelCam."
+            ),
             font=ctk.CTkFont(size=13),
             text_color=MUTED,
             wraplength=270,
@@ -240,9 +250,7 @@ class Window(ctk.CTk):
         except CameraBusy:
             self._show_problem("La cámara está ocupada. Cierra la app que la usa y vuelve a elegir la calidad.")
             return
-        self._show_problem(
-            f"Calidad {quality}. Si ya tenías la cámara abierta en una app, vuelve a elegirla allí para ver el cambio."
-        )
+        self._show_problem(f"Calidad {quality}.")
 
     def _on_fps(self, value: str) -> None:
         try:
@@ -250,10 +258,7 @@ class Window(ctk.CTk):
         except CameraBusy:
             self._show_problem("La cámara está ocupada. Cierra la app que la usa y vuelve a elegir los cuadros.")
             return
-        self._show_problem(
-            f"{value} cuadros por segundo, si tu celular los permite. "
-            "Si ya tenías la cámara abierta en una app, vuelve a elegirla allí para ver el cambio."
-        )
+        self._show_problem(f"{value} cuadros por segundo, si tu celular los permite.")
 
     def _turn_text(self) -> str:
         return f"{self.core.settings.extra_turns * 90}°"
@@ -350,12 +355,17 @@ class Window(ctk.CTk):
 
     # Actualizaciones periódicas
 
+    def _is_hidden(self) -> bool:
+        return self.state() == "withdrawn"
+
     def _tick_preview(self) -> None:
-        image = self.core.latest_image()
-        if image is not None:
-            self._photo.paste(self._to_preview(image))
-        elif self._was_connected:
-            self._photo.paste(self._blank)
+        # Oculta, no gasta procesador en una vista previa que nadie ve.
+        if not self._is_hidden():
+            image = self.core.latest_image()
+            if image is not None:
+                self._photo.paste(self._to_preview(image))
+            elif self._was_connected:
+                self._photo.paste(self._blank)
         self.after(PREVIEW_MS, self._tick_preview)
 
     @staticmethod
@@ -366,6 +376,9 @@ class Window(ctk.CTk):
         return Image.fromarray(np.ascontiguousarray(small), "RGB").resize(PREVIEW_SIZE, Image.NEAREST)
 
     def _tick_status(self) -> None:
+        if self._is_hidden():
+            self.after(STATUS_MS, self._tick_status)
+            return
         status = self.core.status()
         if status.connected != self._was_connected:
             self._was_connected = status.connected
@@ -393,7 +406,40 @@ class Window(ctk.CTk):
                 self._stats_label.configure(text=text, justify="left")
         self.after(STATUS_MS, self._tick_status)
 
+    def _tick_requests(self) -> None:
+        if self._tray.quit_requested.is_set():
+            self._quit()
+            return
+        if self._tray.show_requested.is_set() or (self._show_signal and self._show_signal.requested()):
+            self._tray.show_requested.clear()
+            self._show_window()
+        self.after(REQUESTS_MS, self._tick_requests)
+
+    def _show_window(self) -> None:
+        self.deiconify()
+        self.lift()
+        # Windows no deja que una ventana se ponga adelante sola: siempre visible, por un momento.
+        self.attributes("-topmost", True)
+        self.after(BRING_TO_FRONT_MS, lambda: self.attributes("-topmost", False))
+        self.focus_force()
+
     def _on_close(self) -> None:
+        if not self._has_tray:
+            self._quit()
+            return
+        # La cámara y el celular siguen funcionando; para terminar está «Salir» en el ícono.
+        self.withdraw()
+        settings = self.core.settings
+        if not settings.hide_notice_shown:
+            settings.hide_notice_shown = True
+            self.core.save_settings()
+            self._tray.notify(
+                "Para cerrarlo del todo, busca su ícono junto al reloj y elige «Salir».",
+                f"{APP_NAME} sigue funcionando",
+            )
+
+    def _quit(self) -> None:
+        self._tray.stop()
         if self._apk_server:
             self._apk_server.stop()
         self.destroy()
