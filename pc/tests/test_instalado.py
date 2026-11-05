@@ -118,7 +118,8 @@ def test_la_camara_quedo_registrada_para_apps_de_64_y_de_32_bits():
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, access) as key:
             dll = winreg.QueryValueEx(key, None)[0]
         assert os.path.samefile(dll, Path(INSTALLED) / "vcam" / folder / "celcam_vcam.dll")
-        path = rf"SOFTWARE\Classes\CLSID\{CATEGORY}\Instance\{CAMERA_CLSID}"
+        # El filtro se registra con su nombre (softcam.cpp).
+        path = rf"SOFTWARE\Classes\CLSID\{CATEGORY}\Instance\CelCam"
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, access) as key:
             assert winreg.QueryValueEx(key, "FriendlyName")[0] == "CelCam"
 

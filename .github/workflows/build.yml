@@ -156,6 +156,7 @@ jobs:
           while ((Test-Path "$app\CelCam.exe") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
           if (Test-Path "$app\CelCam.exe") { throw 'El desinstalador no borró el programa' }
           if (Test-Path 'Registry::HKEY_CLASSES_ROOT\CLSID\{7E2A6C14-9B3D-4F58-A1C6-5D0E8B7F3A21}') { throw 'La cámara sigue registrada' }
+          if (Test-Path 'Registry::HKEY_CLASSES_ROOT\CLSID\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\Instance\CelCam') { throw 'La cámara sigue en la lista de cámaras' }
           netsh advfirewall firewall show rule name=CelCam | Out-Null
           if ($LASTEXITCODE -eq 0) { throw 'Sigue la regla del firewall' }
           exit 0
