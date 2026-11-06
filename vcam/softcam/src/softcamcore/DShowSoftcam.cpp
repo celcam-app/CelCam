@@ -95,13 +95,13 @@ AM_MEDIA_TYPE* allocateMediaType()
     return amt;
 }
 
-std::size_t calcDIBSize(int width, int height)
+std::size_t calcDIBSize(int width, int height, int channels)
 {
-    std::size_t stride = (static_cast<unsigned>(width) * 3 + 3) & ~3u;
+    std::size_t stride = (static_cast<unsigned>(width) * channels + 3) & ~3u;
     return stride * static_cast<unsigned>(height);
 }
 
-void fillMediaType(AM_MEDIA_TYPE* amt, int width, int height, float framerate)
+void fillMediaType(AM_MEDIA_TYPE* amt, int width, int height, float framerate, int channels)
 {
     BYTE *pbFormat = amt->pbFormat;
 
@@ -109,7 +109,7 @@ void fillMediaType(AM_MEDIA_TYPE* amt, int width, int height, float framerate)
     {
         framerate = 30.0f;
     }
-    const float bit_rate = (float)width * (float)height * 24 * framerate;
+    const float bit_rate = (float)width * (float)height * 8 * channels * framerate;
     const float period = 10 * 1000 * 1000 / framerate;
 
     VIDEOINFOHEADER* pFormat = (VIDEOINFOHEADER*)pbFormat;
@@ -121,15 +121,15 @@ void fillMediaType(AM_MEDIA_TYPE* amt, int width, int height, float framerate)
     pFormat->bmiHeader.biWidth = width;
     pFormat->bmiHeader.biHeight = height;
     pFormat->bmiHeader.biPlanes = 1;
-    pFormat->bmiHeader.biBitCount = 24;
+    pFormat->bmiHeader.biBitCount = (WORD)(8 * channels);
     pFormat->bmiHeader.biCompression = BI_RGB;
-    pFormat->bmiHeader.biSizeImage = static_cast<uint32_t>(calcDIBSize(width, height));
+    pFormat->bmiHeader.biSizeImage = static_cast<uint32_t>(calcDIBSize(width, height, channels));
 
     amt->majortype = MEDIATYPE_Video;
-    amt->subtype = MEDIASUBTYPE_RGB24;
+    amt->subtype = channels == 4 ? MEDIASUBTYPE_ARGB32 : MEDIASUBTYPE_RGB24;
     amt->bFixedSizeSamples = TRUE;
     amt->bTemporalCompression = FALSE;
-    amt->lSampleSize = static_cast<uint32_t>(calcDIBSize(width, height));
+    amt->lSampleSize = static_cast<uint32_t>(calcDIBSize(width, height, channels));
     amt->formattype = FORMAT_VideoInfo;
     amt->pUnk = nullptr;
     amt->cbFormat = sizeof(VIDEOINFOHEADER);
@@ -137,13 +137,18 @@ void fillMediaType(AM_MEDIA_TYPE* amt, int width, int height, float framerate)
 }
 
 // CelCam: tamaño que usa la cámara si una app la abre antes que el programa.
-// Lo guarda el programa (celcam\vcam.py) en cada arranque.
-int readRememberedSize(const wchar_t* name, int fallback)
+// Lo guarda el programa (celcam\vcam.py) en cada arranque. Cada cámara tiene su clave.
+std::wstring rememberedKey(int index)
+{
+    return index == 0 ? L"Software\\CelCam" : L"Software\\CelCam\\Camara" + std::to_wstring(index + 1);
+}
+
+int readRememberedSize(int index, const wchar_t* name, int fallback)
 {
     DWORD value = 0;
     DWORD size = sizeof(value);
     LSTATUS status = RegGetValueW(
-            HKEY_CURRENT_USER, L"Software\\CelCam", name,
+            HKEY_CURRENT_USER, rememberedKey(index).c_str(), name,
             RRF_RT_REG_DWORD, nullptr, &value, &size);
     if (status != ERROR_SUCCESS || value == 0 || value > 16384 || value % 4 != 0)
     {
@@ -152,12 +157,12 @@ int readRememberedSize(const wchar_t* name, int fallback)
     return static_cast<int>(value);
 }
 
-float readRememberedFramerate()
+float readRememberedFramerate(int index)
 {
     DWORD value = 0;
     DWORD size = sizeof(value);
     LSTATUS status = RegGetValueW(
-            HKEY_CURRENT_USER, L"Software\\CelCam", L"Cuadros",
+            HKEY_CURRENT_USER, rememberedKey(index).c_str(), L"Cuadros",
             RRF_RT_REG_DWORD, nullptr, &value, &size);
     if (status != ERROR_SUCCESS || value == 0 || value > 240)
     {
@@ -173,12 +178,13 @@ AM_MEDIA_TYPE* makeMediaType(const softcam::CameraFormat& format)
     {
         return nullptr;
     }
-    fillMediaType(amt, format.m_width, format.m_height, format.m_framerate);
+    fillMediaType(amt, format.m_width, format.m_height, format.m_framerate, format.m_channels);
     return amt;
 }
 
 // CelCam: primero el formato actual (el que usa una app que no elige), después los habituales.
 // Solo dicen qué puede pedir cada app: el filtro adapta el tamaño, y los cuadros llegan cuando llegan.
+// La transparencia se ofrece solo mientras la imagen la tiene: en el uso normal nadie ve un formato de más.
 std::vector<softcam::CameraFormat> makeFormats(const softcam::CameraFormat& current)
 {
     const int sizes[][2] = {
@@ -187,14 +193,35 @@ std::vector<softcam::CameraFormat> makeFormats(const softcam::CameraFormat& curr
     const float framerates[] = { 30.0f, 60.0f, 120.0f };
 
     std::vector<softcam::CameraFormat> formats{ current };
+    const auto add = [&](const softcam::CameraFormat& format)
+    {
+        const bool known = std::any_of(formats.begin(), formats.end(), [&](const softcam::CameraFormat& other)
+        {
+            return other.m_width == format.m_width && other.m_height == format.m_height &&
+                other.m_framerate == format.m_framerate && other.m_channels == format.m_channels;
+        });
+        if (!known)
+        {
+            formats.push_back(format);
+        }
+    };
+    if (current.m_channels == 4)
+    {
+        // Una app que no admite transparencia también recibe, antes que nada, el tamaño actual.
+        add(softcam::CameraFormat{ current.m_width, current.m_height, current.m_framerate, 3 });
+        for (const auto& size : sizes)
+        {
+            for (float framerate : framerates)
+            {
+                add(softcam::CameraFormat{ size[0], size[1], framerate, 4 });
+            }
+        }
+    }
     for (const auto& size : sizes)
     {
         for (float framerate : framerates)
         {
-            if (size[0] != current.m_width || size[1] != current.m_height || framerate != current.m_framerate)
-            {
-                formats.push_back(softcam::CameraFormat{ size[0], size[1], framerate });
-            }
+            add(softcam::CameraFormat{ size[0], size[1], framerate, 3 });
         }
     }
     return formats;
@@ -208,22 +235,25 @@ namespace softcam {
 CUnknown * Softcam::CreateInstance(
                     LPUNKNOWN   lpunk,
                     const GUID& clsid,
+                    int         index,
                     HRESULT*    phr)
 {
     OPEN_LOGFILE();
     LOG("===== logging started =====\n");
 
-    return new Softcam(lpunk, clsid, phr);
+    return new Softcam(lpunk, clsid, index, phr);
 }
 
-Softcam::Softcam(LPUNKNOWN lpunk, const GUID& clsid, HRESULT *phr) :
+Softcam::Softcam(LPUNKNOWN lpunk, const GUID& clsid, int index, HRESULT *phr) :
     CSource(NAME("DirectShow Softcam"), lpunk, clsid),
-    m_frame_buffer(FrameBuffer::open()),
+    m_index(index),
+    m_frame_buffer(FrameBuffer::open(index)),
     m_valid(true),
     m_format{
-        m_frame_buffer ? m_frame_buffer.width() : readRememberedSize(L"Ancho", 1280),
-        m_frame_buffer ? m_frame_buffer.height() : readRememberedSize(L"Alto", 720),
-        m_frame_buffer ? m_frame_buffer.framerate() : readRememberedFramerate()
+        m_frame_buffer ? m_frame_buffer.width() : readRememberedSize(index, L"Ancho", 1280),
+        m_frame_buffer ? m_frame_buffer.height() : readRememberedSize(index, L"Alto", 720),
+        m_frame_buffer ? m_frame_buffer.framerate() : readRememberedFramerate(index),
+        m_frame_buffer ? m_frame_buffer.channels() : 3
     },
     m_formats(makeFormats(m_format))
 {
@@ -267,22 +297,23 @@ Softcam::SetFormat(AM_MEDIA_TYPE *mt)
         LOG("-> E_FAIL\n");
         return E_FAIL;
     }
-    if (mt->majortype != MEDIATYPE_Video ||
-        mt->subtype != MEDIASUBTYPE_RGB24)
+    const int channels = mt->subtype == MEDIASUBTYPE_RGB24 ? 3 : mt->subtype == MEDIASUBTYPE_ARGB32 ? 4 : 0;
+    if (mt->majortype != MEDIATYPE_Video || channels == 0)
     {
         LOG("-> E_FAIL (invalid media type)\n");
         return E_FAIL;
     }
     CameraFormat requested = format();
+    requested.m_channels = channels;
     if (mt->formattype == FORMAT_VideoInfo && mt->pbFormat)
     {
         VIDEOINFOHEADER* pFormat = (VIDEOINFOHEADER*)mt->pbFormat;
-        if (!supports(pFormat->bmiHeader.biWidth, pFormat->bmiHeader.biHeight))
+        if (!supports(pFormat->bmiHeader.biWidth, pFormat->bmiHeader.biHeight, channels))
         {
             LOG("-> E_FAIL (invalid dimension)\n");
             return E_FAIL;
         }
-        if (pFormat->bmiHeader.biBitCount != 24 ||
+        if (pFormat->bmiHeader.biBitCount != 8 * channels ||
             pFormat->bmiHeader.biCompression != BI_RGB)
         {
             LOG("-> E_FAIL (invalid color format)\n");
@@ -297,7 +328,8 @@ Softcam::SetFormat(AM_MEDIA_TYPE *mt)
     }
     const CameraFormat current = format();
     if (GetPin(0)->IsConnected() &&
-        (requested.m_width != current.m_width || requested.m_height != current.m_height))
+        (requested.m_width != current.m_width || requested.m_height != current.m_height ||
+         requested.m_channels != current.m_channels))
     {
         LOG("-> VFW_E_ALREADY_CONNECTED\n");
         return VFW_E_ALREADY_CONNECTED;
@@ -419,7 +451,7 @@ FrameBuffer* Softcam::getFrameBuffer()
     if (!m_frame_buffer)
     {
         // CelCam: sirve cualquier formato: la imagen se adapta al tamaño que negoció la app.
-        auto fb = FrameBuffer::open();
+        auto fb = FrameBuffer::open(m_index);
         if (fb && fb.active())
         {
             m_frame_buffer = fb;
@@ -450,11 +482,11 @@ Softcam::format()
 }
 
 bool
-Softcam::supports(int width, int height) const
+Softcam::supports(int width, int height, int channels) const
 {
     return std::any_of(m_formats.begin(), m_formats.end(), [&](const CameraFormat& format)
     {
-        return format.m_width == width && format.m_height == height;
+        return format.m_width == width && format.m_height == height && format.m_channels == channels;
     });
 }
 
@@ -464,7 +496,8 @@ SoftcamStream::SoftcamStream(HRESULT *phr,
     CSourceStream(NAME("DirectShow Softcam Stream"), phr, pParent, pPinName),
     m_valid(pParent->valid()),
     m_width(pParent->format().m_width),
-    m_height(pParent->format().m_height)
+    m_height(pParent->format().m_height),
+    m_channels(pParent->format().m_channels)
 {
 }
 
@@ -509,7 +542,7 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
         if (auto fb = getParent()->getFrameBuffer())
         {
             bool active = fb->waitForNewFrame(m_frame_counter);
-            fb->transferToDIB(pData, m_width, m_height, m_scale_buffer, &m_frame_counter);
+            fb->transferToDIB(pData, m_width, m_height, m_channels, m_scale_buffer, &m_frame_counter);
 
             if (!active)
             {
@@ -518,7 +551,7 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
                 getParent()->releaseFrameBuffer();
 
                 // Save the last image for a placeholder.
-                const std::size_t size = calcDIBSize(m_width, m_height);
+                const std::size_t size = calcDIBSize(m_width, m_height, m_channels);
                 if (!m_screenshot)
                 {
                     m_screenshot.reset(new uint8_t[size]);
@@ -527,7 +560,11 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
                     // Darken the image to indicate that the source is inactive.
                     for (std::size_t i = 0; i < size; i++)
                     {
-                        pData[i] /= 4;
+                        // CelCam: la transparencia queda como está.
+                        if (m_channels != 4 || i % 4 != 3)
+                        {
+                            pData[i] /= 4;
+                        }
                     }
                 }
                 std::memcpy(m_screenshot.get(), pData, size);
@@ -542,7 +579,7 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
             // CelCam: sin programa abierto todavía no hay imagen guardada: queda en negro.
             if (m_screenshot)
             {
-                const std::size_t size = calcDIBSize(m_width, m_height);
+                const std::size_t size = calcDIBSize(m_width, m_height, m_channels);
                 std::memcpy(pData, m_screenshot.get(), size);
             }
         }
@@ -593,7 +630,7 @@ HRESULT SoftcamStream::GetMediaType(CMediaType *pmt)
     }
 
     const CameraFormat format = getParent()->format();
-    fillMediaType(pmt, format.m_width, format.m_height, format.m_framerate);
+    fillMediaType(pmt, format.m_width, format.m_height, format.m_framerate, format.m_channels);
 
     LOG("-> NOERROR\n");
     return NOERROR;
@@ -603,8 +640,9 @@ HRESULT SoftcamStream::CheckMediaType(const CMediaType *pMediaType)
 {
     CheckPointer(pMediaType,E_POINTER);
 
+    const int channels = *pMediaType->Subtype() == MEDIASUBTYPE_RGB24 ? 3 : *pMediaType->Subtype() == MEDIASUBTYPE_ARGB32 ? 4 : 0;
     if (*pMediaType->Type() != MEDIATYPE_Video ||
-        *pMediaType->Subtype() != MEDIASUBTYPE_RGB24 ||
+        channels == 0 ||
         *pMediaType->FormatType() != FORMAT_VideoInfo ||
         pMediaType->Format() == nullptr)
     {
@@ -612,9 +650,9 @@ HRESULT SoftcamStream::CheckMediaType(const CMediaType *pMediaType)
         return E_FAIL;
     }
     const VIDEOINFOHEADER *pvi = (const VIDEOINFOHEADER*)pMediaType->Format();
-    if (pvi->bmiHeader.biBitCount != 24 ||
+    if (pvi->bmiHeader.biBitCount != 8 * channels ||
         pvi->bmiHeader.biCompression != BI_RGB ||
-        !getParent()->supports(pvi->bmiHeader.biWidth, pvi->bmiHeader.biHeight))
+        !getParent()->supports(pvi->bmiHeader.biWidth, pvi->bmiHeader.biHeight, channels))
     {
         LOG("-> E_FAIL (invalid format)\n");
         return E_FAIL;
@@ -634,7 +672,7 @@ HRESULT SoftcamStream::DecideBufferSize(IMemAllocator *pAlloc,
 
     VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER *)m_mt.Format();
     pProperties->cBuffers = 1;
-    pProperties->cbBuffer = (long)calcDIBSize(pvi->bmiHeader.biWidth, pvi->bmiHeader.biHeight);
+    pProperties->cbBuffer = (long)calcDIBSize(pvi->bmiHeader.biWidth, pvi->bmiHeader.biHeight, pvi->bmiHeader.biBitCount / 8);
 
     ALLOCATOR_PROPERTIES actual;
     hr = pAlloc->SetProperties(pProperties, &actual);
@@ -658,6 +696,7 @@ HRESULT SoftcamStream::OnThreadCreate()
     const VIDEOINFOHEADER *pvi = (const VIDEOINFOHEADER*)m_mt.Format();
     m_width = pvi->bmiHeader.biWidth;
     m_height = pvi->bmiHeader.biHeight;
+    m_channels = pvi->bmiHeader.biBitCount / 8;
     m_frame_time = pvi->AvgTimePerFrame > 0 ? pvi->AvgTimePerFrame : 333333;
     m_sample_time = 0;
     // Una imagen guardada de otra conexión puede tener otro tamaño.

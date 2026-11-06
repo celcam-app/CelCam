@@ -14,6 +14,7 @@ struct CameraFormat
     int     m_width;
     int     m_height;
     float   m_framerate;
+    int     m_channels; // 3 (RGB24) o 4 (ARGB32)
 };
 
 
@@ -23,6 +24,7 @@ public:
     static CUnknown* CreateInstance(
                     LPUNKNOWN   lpunk,
                     const GUID& clsid,
+                    int         index,
                     HRESULT*    phr);
 
     // IUnknown Methods
@@ -38,18 +40,19 @@ public:
     FrameBuffer*    getFrameBuffer();
     bool            valid() const { return m_valid; }
     CameraFormat    format();
-    bool            supports(int width, int height) const;
+    bool            supports(int width, int height, int channels) const;
     bool            running() const { return m_State == State_Running; }
     void            releaseFrameBuffer();
 
 private:
     CCritSec    m_critsec;
+    const int   m_index;
     FrameBuffer m_frame_buffer;
     const bool  m_valid;
     CameraFormat m_format;
     std::vector<CameraFormat> m_formats;
 
-    Softcam(LPUNKNOWN lpunk, const GUID& clsid, HRESULT *phr);
+    Softcam(LPUNKNOWN lpunk, const GUID& clsid, int index, HRESULT *phr);
 };
 
 
@@ -98,6 +101,7 @@ private:
     // Lo que negoció la app conectada.
     int         m_width;
     int         m_height;
+    int         m_channels;
     REFERENCE_TIME m_frame_time = 333333;
     uint64_t    m_frame_counter = 0;
     std::unique_ptr<uint8_t[]>  m_screenshot;

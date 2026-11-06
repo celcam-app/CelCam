@@ -7,17 +7,28 @@
 #include <softcamcore/SenderAPI.h>
 
 
-// {7E2A6C14-9B3D-4F58-A1C6-5D0E8B7F3A21} (propio de CelCam)
-DEFINE_GUID(CLSID_DShowSoftcam,
+// Propios de CelCam, uno por cámara. Tienen que coincidir con CAMERA_CLSIDS de pc\celcam\vcam.py.
+// {7E2A6C14-9B3D-4F58-A1C6-5D0E8B7F3A21}
+DEFINE_GUID(CLSID_CelCam1,
 0x7e2a6c14, 0x9b3d, 0x4f58, 0xa1, 0xc6, 0x5d, 0x0e, 0x8b, 0x7f, 0x3a, 0x21);
+// {7E2A6C15-9B3D-4F58-A1C6-5D0E8B7F3A21}
+DEFINE_GUID(CLSID_CelCam2,
+0x7e2a6c15, 0x9b3d, 0x4f58, 0xa1, 0xc6, 0x5d, 0x0e, 0x8b, 0x7f, 0x3a, 0x21);
+// {7E2A6C16-9B3D-4F58-A1C6-5D0E8B7F3A21}
+DEFINE_GUID(CLSID_CelCam3,
+0x7e2a6c16, 0x9b3d, 0x4f58, 0xa1, 0xc6, 0x5d, 0x0e, 0x8b, 0x7f, 0x3a, 0x21);
+// {7E2A6C17-9B3D-4F58-A1C6-5D0E8B7F3A21}
+DEFINE_GUID(CLSID_CelCam4,
+0x7e2a6c17, 0x9b3d, 0x4f58, 0xa1, 0xc6, 0x5d, 0x0e, 0x8b, 0x7f, 0x3a, 0x21);
 
 
 namespace {
 
 // Setup data
 
-const wchar_t FILTER_NAME[] = L"CelCam";
-const GUID &FILTER_CLASSID = CLSID_DShowSoftcam;
+const wchar_t* const FILTER_NAMES[] = { L"CelCam", L"CelCam 2", L"CelCam 3", L"CelCam 4" };
+const GUID* const FILTER_CLASSIDS[] = { &CLSID_CelCam1, &CLSID_CelCam2, &CLSID_CelCam3, &CLSID_CelCam4 };
+static_assert(sizeof(FILTER_CLASSIDS) / sizeof(FILTER_CLASSIDS[0]) == softcam::FrameBuffer::MaxCameras, "una por cámara");
 
 const AMOVIESETUP_MEDIATYPE s_pin_types[] =
 {
@@ -50,9 +61,10 @@ const REGFILTER2 s_reg_filter2 =
     s_pins
 };
 
+template <int Index>
 CUnknown * WINAPI CreateSoftcamInstance(LPUNKNOWN lpunk, HRESULT *phr)
 {
-    return softcam::Softcam::CreateInstance(lpunk, FILTER_CLASSID, phr);
+    return softcam::Softcam::CreateInstance(lpunk, *FILTER_CLASSIDS[Index], Index, phr);
 }
 
 } // namespace
@@ -61,13 +73,10 @@ CUnknown * WINAPI CreateSoftcamInstance(LPUNKNOWN lpunk, HRESULT *phr)
 
 CFactoryTemplate g_Templates[] =
 {
-    {
-        FILTER_NAME,
-        &FILTER_CLASSID,
-        &CreateSoftcamInstance,
-        NULL,
-        nullptr
-    }
+    { L"CelCam",   &CLSID_CelCam1, &CreateSoftcamInstance<0>, NULL, nullptr },
+    { L"CelCam 2", &CLSID_CelCam2, &CreateSoftcamInstance<1>, NULL, nullptr },
+    { L"CelCam 3", &CLSID_CelCam3, &CreateSoftcamInstance<2>, NULL, nullptr },
+    { L"CelCam 4", &CLSID_CelCam4, &CreateSoftcamInstance<3>, NULL, nullptr },
 };
 int g_cTemplates = sizeof(g_Templates) / sizeof(g_Templates[0]);
 
@@ -94,17 +103,20 @@ STDAPI DllRegisterServer()
         {
             break;
         }
-        pFM2->UnregisterFilter(
-                &CLSID_VideoInputDeviceCategory,
-                0,
-                FILTER_CLASSID);
-        hr = pFM2->RegisterFilter(
-                FILTER_CLASSID,
-                FILTER_NAME,
-                0,
-                &CLSID_VideoInputDeviceCategory,
-                FILTER_NAME,
-                &s_reg_filter2);
+        for (int i = 0; i < softcam::FrameBuffer::MaxCameras && SUCCEEDED(hr); i++)
+        {
+            pFM2->UnregisterFilter(
+                    &CLSID_VideoInputDeviceCategory,
+                    0,
+                    *FILTER_CLASSIDS[i]);
+            hr = pFM2->RegisterFilter(
+                    *FILTER_CLASSIDS[i],
+                    FILTER_NAMES[i],
+                    0,
+                    &CLSID_VideoInputDeviceCategory,
+                    FILTER_NAMES[i],
+                    &s_reg_filter2);
+        }
         pFM2->Release();
     } while (0);
     CoFreeUnusedLibraries();
@@ -134,10 +146,18 @@ STDAPI DllUnregisterServer()
         {
             break;
         }
-        hr = pFM2->UnregisterFilter(
-                &CLSID_VideoInputDeviceCategory,
-                FILTER_NAME,
-                FILTER_CLASSID);
+        // Sigue con las demás aunque una falle: desinstalar no tiene que dejar nada.
+        for (int i = 0; i < softcam::FrameBuffer::MaxCameras; i++)
+        {
+            HRESULT one = pFM2->UnregisterFilter(
+                    &CLSID_VideoInputDeviceCategory,
+                    FILTER_NAMES[i],
+                    *FILTER_CLASSIDS[i]);
+            if (FAILED(one))
+            {
+                hr = one;
+            }
+        }
         pFM2->Release();
     } while (0);
     CoFreeUnusedLibraries();
@@ -157,9 +177,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD  dwReason, LPVOID lpReserved)
 // Softcam Sender API
 //
 
-extern "C" scCamera scCreateCamera(int width, int height, float framerate)
+extern "C" scCamera scCreateCamera(int index, int width, int height, float framerate, int channels)
 {
-    return softcam::sender::CreateCamera(width, height, framerate);
+    return softcam::sender::CreateCamera(index, width, height, framerate, channels);
 }
 
 extern "C" void     scDeleteCamera(scCamera camera)
@@ -172,9 +192,9 @@ extern "C" void     scSendFrame(scCamera camera, const void* image_bits)
     return softcam::sender::SendFrame(camera, image_bits);
 }
 
-extern "C" bool     scSetFormat(scCamera camera, int width, int height, float framerate, const void* image_bits)
+extern "C" bool     scSetFormat(scCamera camera, int width, int height, float framerate, int channels, const void* image_bits)
 {
-    return softcam::sender::SetFormat(camera, width, height, framerate, image_bits);
+    return softcam::sender::SetFormat(camera, width, height, framerate, channels, image_bits);
 }
 
 extern "C" bool     scWaitForConnection(scCamera camera, float timeout)

@@ -17,6 +17,11 @@ extern "C"
         Camera applications running on the system will be able to find the
         new virtual camera through DirectShow API.
 
+        CelCam: the `index` argument selects one of the four cameras, from 0
+        (`CelCam`) to 3 (`CelCam 4`). The `channels` argument is 3 if the images
+        are BGR, or 4 if they are BGRA with transparency. Applications that do
+        not negotiate transparency see the image over a dark color.
+
         The `width` argument and the `height` argument specify the dimension
         of the camera image. The width and the height should be a positive
         number and be a multiple of four.
@@ -32,7 +37,8 @@ extern "C"
         If this function succeeds, it returns the handle of a new virtual
         camera instance, otherwise, it returns a null pointer.
 
-        This function fails if another instance already exists in the system.
+        This function fails if another instance with the same index already
+        exists in the system.
 
         The new instance created by this function should be deleted with
         the `scDeleteCamera` function when it no longer is used.
@@ -40,7 +46,7 @@ extern "C"
         function, the virtual camera intance and associated resources are
         deleted automatically.
     */
-    scCamera    SOFTCAM_API scCreateCamera(int width, int height, float framerate = 60.0f);
+    scCamera    SOFTCAM_API scCreateCamera(int index, int width, int height, float framerate = 60.0f, int channels = 3);
 
     /*
         This function deletes the specified virtual camera instance.
@@ -75,7 +81,7 @@ extern "C"
         if the size is invalid or bigger than 1920x1080 (or than the size used
         to create the camera, if that one is bigger).
     */
-    bool        SOFTCAM_API scSetFormat(scCamera camera, int width, int height, float framerate, const void* image_bits);
+    bool        SOFTCAM_API scSetFormat(scCamera camera, int width, int height, float framerate, int channels, const void* image_bits);
 
     /*
         This function waits until an application connects to the specified

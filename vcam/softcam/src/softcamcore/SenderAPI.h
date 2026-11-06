@@ -6,10 +6,10 @@ namespace sender {
 
 using CameraHandle = void*;
 
-CameraHandle    CreateCamera(int width, int height, float framerate = 60.0f);
+CameraHandle    CreateCamera(int index, int width, int height, float framerate = 60.0f, int channels = 3);
 void            DeleteCamera(CameraHandle camera);
 void            SendFrame(CameraHandle camera, const void* image_bits);
-bool            SetFormat(CameraHandle camera, int width, int height, float framerate, const void* image_bits);
+bool            SetFormat(CameraHandle camera, int width, int height, float framerate, int channels, const void* image_bits);
 bool            WaitForConnection(CameraHandle camera, float timeout = 0.0f);
 bool            IsConnected(CameraHandle camera);
 

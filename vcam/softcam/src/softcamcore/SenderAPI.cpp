@@ -14,7 +14,25 @@ struct Camera
     softcam::Timer          m_timer;
 };
 
-std::atomic<Camera*>    s_camera;
+// CelCam: una por cada cámara del sistema.
+std::atomic<Camera*>    s_cameras[softcam::FrameBuffer::MaxCameras];
+
+// Nunca se lee la cámara antes de confirmar que sigue viva: el handle puede ser de una ya borrada.
+Camera* findCamera(softcam::sender::CameraHandle camera)
+{
+    Camera* target = static_cast<Camera*>(camera);
+    if (target)
+    {
+        for (auto& slot : s_cameras)
+        {
+            if (slot.load() == target)
+            {
+                return target;
+            }
+        }
+    }
+    return nullptr;
+}
 
 } //namespace
 
@@ -22,13 +40,17 @@ std::atomic<Camera*>    s_camera;
 namespace softcam {
 namespace sender {
 
-CameraHandle    CreateCamera(int width, int height, float framerate)
+CameraHandle    CreateCamera(int index, int width, int height, float framerate, int channels)
 {
-    if (auto fb = FrameBuffer::create(width, height, framerate))
+    if (index < 0 || index >= FrameBuffer::MaxCameras)
+    {
+        return nullptr;
+    }
+    if (auto fb = FrameBuffer::create(index, width, height, framerate, channels))
     {
         Camera* camera = new Camera{ fb, Timer() };
         Camera* expected = nullptr;
-        if (s_camera.compare_exchange_strong(expected, camera))
+        if (s_cameras[index].compare_exchange_strong(expected, camera))
         {
             return camera;
         }
@@ -40,17 +62,26 @@ CameraHandle    CreateCamera(int width, int height, float framerate)
 void            DeleteCamera(CameraHandle camera)
 {
     Camera* target = static_cast<Camera*>(camera);
-    if (target && s_camera.compare_exchange_strong(target, nullptr))
+    if (!target)
     {
-        target->m_frame_buffer.deactivate();
-        delete target;
+        return;
+    }
+    for (auto& slot : s_cameras)
+    {
+        Camera* expected = target;
+        if (slot.compare_exchange_strong(expected, nullptr))
+        {
+            target->m_frame_buffer.deactivate();
+            delete target;
+            return;
+        }
     }
 }
 
 void            SendFrame(CameraHandle camera, const void* image_bits)
 {
-    Camera* target = static_cast<Camera*>(camera);
-    if (target && s_camera.load() == target && image_bits)
+    Camera* target = findCamera(camera);
+    if (target && image_bits)
     {
         // CelCam: the frame rate is only what the camera announces to applications.
         // Frames come from a phone in real time, so they are never delayed here.
@@ -58,20 +89,20 @@ void            SendFrame(CameraHandle camera, const void* image_bits)
     }
 }
 
-bool            SetFormat(CameraHandle camera, int width, int height, float framerate, const void* image_bits)
+bool            SetFormat(CameraHandle camera, int width, int height, float framerate, int channels, const void* image_bits)
 {
-    Camera* target = static_cast<Camera*>(camera);
-    if (target && s_camera.load() == target)
+    Camera* target = findCamera(camera);
+    if (target)
     {
-        return target->m_frame_buffer.setFormat(width, height, framerate, image_bits);
+        return target->m_frame_buffer.setFormat(width, height, framerate, channels, image_bits);
     }
     return false;
 }
 
 bool            WaitForConnection(CameraHandle camera, float timeout)
 {
-    Camera* target = static_cast<Camera*>(camera);
-    if (target && s_camera.load() == target)
+    Camera* target = findCamera(camera);
+    if (target)
     {
         Timer timer;
         while (!target->m_frame_buffer.connected())
@@ -89,8 +120,8 @@ bool            WaitForConnection(CameraHandle camera, float timeout)
 
 bool            IsConnected(CameraHandle camera)
 {
-    Camera* target = static_cast<Camera*>(camera);
-    if (target && s_camera.load() == target)
+    Camera* target = findCamera(camera);
+    if (target)
     {
         return target->m_frame_buffer.connected();
     }

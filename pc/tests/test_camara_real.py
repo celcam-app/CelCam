@@ -1,7 +1,8 @@
 """Prueba la cámara virtual de verdad: el filtro compilado, abierto con FFmpeg por DirectShow.
 
-Necesita el filtro en pc\\stage. Usa el registro que ya exista; con CELCAM_REGISTRAR_PRUEBA=1 (GitHub Actions)
-lo registra para este usuario y lo saca al terminar. Si no se puede, o si otro CelCam tiene la cámara, se saltea.
+Necesita el filtro en pc\\stage (o en CELCAM_FILTRO_PRUEBA). Usa el registro que ya exista; con
+CELCAM_REGISTRAR_PRUEBA=1 (GitHub Actions) lo registra para este usuario y lo saca al terminar. Si no se puede, o si
+otro CelCam tiene la cámara, se saltea. CELCAM_CAMARA_PRUEBA elige la primera cámara a usar (por defecto, 0).
 """
 
 from __future__ import annotations
@@ -16,9 +17,12 @@ import av
 import numpy as np
 import pytest
 
-from celcam.vcam import CAMERA_CLSID, CameraBusy, VirtualCamera, is_registered
+from celcam.vcam import CAMERA_CLSIDS, CAMERA_COUNT, CAMERA_NAMES, CameraBusy, VirtualCamera, is_registered
 
-STAGE = Path(__file__).resolve().parent.parent / "stage" / "vcam"
+STAGE = Path(os.environ.get("CELCAM_FILTRO_PRUEBA") or Path(__file__).resolve().parent.parent / "stage" / "vcam")
+# La cámara que usan las pruebas; las que necesitan dos usan también la siguiente.
+INDEX = int(os.environ.get("CELCAM_CAMARA_PRUEBA", "0"))
+NAME = CAMERA_NAMES[INDEX]
 CATEGORY = "{860BB310-5D01-11D0-BD3B-00A0C911CE86}"
 CLASSES = r"Software\Classes"
 
@@ -42,15 +46,15 @@ def _delete_tree(path: str) -> None:
         pass
 
 
-def _register_for_this_user(dll: Path) -> None:
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{CLASSES}\CLSID\{CAMERA_CLSID}") as key:
-        winreg.SetValueEx(key, None, 0, winreg.REG_SZ, "CelCam")
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{CLASSES}\CLSID\{CAMERA_CLSID}\InprocServer32") as key:
+def _register_for_this_user(dll: Path, clsid: str, name: str) -> None:
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{CLASSES}\CLSID\{clsid}") as key:
+        winreg.SetValueEx(key, None, 0, winreg.REG_SZ, name)
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{CLASSES}\CLSID\{clsid}\InprocServer32") as key:
         winreg.SetValueEx(key, None, 0, winreg.REG_SZ, str(dll))
         winreg.SetValueEx(key, "ThreadingModel", 0, winreg.REG_SZ, "Both")
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{CLASSES}\CLSID\{CATEGORY}\Instance\{CAMERA_CLSID}") as key:
-        winreg.SetValueEx(key, "CLSID", 0, winreg.REG_SZ, CAMERA_CLSID)
-        winreg.SetValueEx(key, "FriendlyName", 0, winreg.REG_SZ, "CelCam")
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{CLASSES}\CLSID\{CATEGORY}\Instance\{clsid}") as key:
+        winreg.SetValueEx(key, "CLSID", 0, winreg.REG_SZ, clsid)
+        winreg.SetValueEx(key, "FriendlyName", 0, winreg.REG_SZ, name)
 
 
 @pytest.fixture(scope="module")
@@ -58,17 +62,19 @@ def registered():
     dll = STAGE / "x64" / "celcam_vcam.dll"
     if not dll.exists():
         pytest.skip("Falta compilar la cámara virtual")
-    if is_registered():
-        yield dll
-        return
-    if os.environ.get("CELCAM_REGISTRAR_PRUEBA") != "1":
-        pytest.skip("La cámara virtual no está registrada en esta PC")
-    _register_for_this_user(dll)
+    missing = [i for i in range(CAMERA_COUNT) if not is_registered(i)]
+    if missing and os.environ.get("CELCAM_REGISTRAR_PRUEBA") != "1":
+        if not is_registered(INDEX):
+            pytest.skip("La cámara virtual no está registrada en esta PC")
+        missing = []
+    for i in missing:
+        _register_for_this_user(dll, CAMERA_CLSIDS[i], CAMERA_NAMES[i])
     try:
         yield dll
     finally:
-        _delete_tree(rf"{CLASSES}\CLSID\{CAMERA_CLSID}")
-        _delete_tree(rf"{CLASSES}\CLSID\{CATEGORY}\Instance\{CAMERA_CLSID}")
+        for i in missing:
+            _delete_tree(rf"{CLASSES}\CLSID\{CAMERA_CLSIDS[i]}")
+            _delete_tree(rf"{CLASSES}\CLSID\{CATEGORY}\Instance\{CAMERA_CLSIDS[i]}")
 
 
 def _pattern(width: int, height: int) -> np.ndarray:
@@ -84,13 +90,13 @@ def _pattern(width: int, height: int) -> np.ndarray:
 class Sender:
     """Manda la imagen de prueba a 30 cuadros por segundo, como un celular."""
 
-    def __init__(self, dll: Path, width: int, height: int, fps: int = 30) -> None:
-        self.camera = VirtualCamera(dll)
+    def __init__(self, dll: Path, width: int, height: int, fps: int = 30, index: int = INDEX, image: np.ndarray | None = None) -> None:
+        self.camera = VirtualCamera(dll, index)
+        self.image = _pattern(width, height) if image is None else image
         try:
-            self.camera.open(width, height, fps, wait_seconds=1.0)
+            self.camera.open(width, height, fps, wait_seconds=1.0, channels=self.image.shape[2])
         except CameraBusy:
             pytest.skip("Otro CelCam tiene la cámara abierta")
-        self.image = _pattern(width, height)
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -124,9 +130,9 @@ def _assert_pattern(image: np.ndarray, bars: tuple[int, int] = (0, 0)) -> None:
         assert all(abs(a - b) < 40 for a, b in zip(got, wanted)), f"{got} en lugar de {wanted}"
 
 
-def _capture(seconds: float, options: dict[str, str] | None = None, on_frame=None) -> list[np.ndarray]:
+def _capture(seconds: float, options: dict[str, str] | None = None, on_frame=None, name: str = NAME) -> list[np.ndarray]:
     frames = []
-    with av.open("video=CelCam", format="dshow", options={"rtbufsize": "100M", **(options or {})}) as box:
+    with av.open(f"video={name}", format="dshow", options={"rtbufsize": "100M", **(options or {})}) as box:
         start = time.monotonic()
         for frame in box.decode(box.streams.video[0]):
             frames.append(frame.to_ndarray(format="rgb24"))
@@ -200,3 +206,65 @@ def test_abierta_sin_programa_queda_en_negro_y_toma_la_imagen_al_llegar(register
     finally:
         if sender:
             sender.stop()
+
+
+def test_cada_camara_muestra_su_propia_imagen(registered):
+    if INDEX + 1 >= CAMERA_COUNT or not is_registered(INDEX + 1):
+        pytest.skip("Falta la segunda cámara")
+    # La segunda, con los cuartos al revés.
+    first = Sender(registered, 1280, 720, index=INDEX)
+    second = Sender(registered, 640, 360, index=INDEX + 1, image=_pattern(640, 360)[::-1, ::-1].copy())
+    try:
+        _assert_pattern(_capture(1.0, name=CAMERA_NAMES[INDEX])[-1])
+        frame = _capture(1.0, name=CAMERA_NAMES[INDEX + 1])[-1]
+        assert frame.shape == (360, 640, 3)
+        _assert_pattern(frame[::-1, ::-1])
+    finally:
+        first.stop()
+        second.stop()
+
+
+def _transparent(width: int, height: int) -> np.ndarray:
+    """BGRA: la mitad de arriba es roja y opaca; la de abajo, azul pero del todo transparente."""
+    image = np.zeros((height, width, 4), dtype=np.uint8)
+    image[: height // 2] = (0, 0, 255, 255)
+    image[height // 2 :] = (255, 0, 0, 0)
+    return image
+
+
+def test_con_transparencia_una_app_comun_ve_el_color_de_fondo(registered):
+    sender = Sender(registered, 1280, 720, image=_transparent(1280, 720))
+    try:
+        # Sin pedir nada, FFmpeg toma el primer formato: con transparencia.
+        frame = _capture(1.2, {"pixel_format": "bgr24"})[-1]
+        assert frame.shape == (720, 1280, 3)
+        assert all(abs(a - b) < 12 for a, b in zip(frame[180, 640], RED))
+        # Lo transparente se ve del color de fondo, no del azul que hay debajo.
+        assert all(abs(a - b) < 12 for a, b in zip(frame[540, 640], (17, 19, 24)))
+    finally:
+        sender.stop()
+
+
+def test_con_transparencia_la_app_que_la_pide_la_recibe(registered):
+    sender = Sender(registered, 1280, 720, image=_transparent(1280, 720))
+    try:
+        raw = None
+        with av.open(f"video={NAME}", format="dshow", options={"rtbufsize": "100M", "pixel_format": "bgr0"}) as box:
+            # Los datos tal cual los entrega el filtro: BGRA, de abajo hacia arriba.
+            for index, packet in enumerate(box.demux(box.streams.video[0])):
+                if index >= 10 and packet.size:
+                    raw = np.frombuffer(bytes(packet), dtype=np.uint8).reshape(720, 1280, 4)
+                    break
+        assert list(raw[719 - 180, 640]) == [0, 0, 255, 255]
+        assert raw[719 - 540, 640][3] == 0
+    finally:
+        sender.stop()
+
+
+def test_sin_transparencia_no_se_ofrece_ese_formato(registered):
+    sender = Sender(registered, 1280, 720)
+    try:
+        with pytest.raises(av.error.FFmpegError):
+            _capture(0.5, {"pixel_format": "bgr0"})
+    finally:
+        sender.stop()
