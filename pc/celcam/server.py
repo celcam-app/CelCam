@@ -1,4 +1,4 @@
-"""Servidor TLS que espera al celular. Una sola sesión activa: la más nueva reemplaza a la anterior."""
+"""Servidor TLS que espera a los celulares. Cada cámara tiene una sola sesión: la más nueva reemplaza a la anterior."""
 
 from __future__ import annotations
 
@@ -58,17 +58,26 @@ class Session:
     en cola y salen después de cada mensaje recibido (como mínimo, cada 2 s).
     """
 
-    def __init__(self, sock: ssl.SSLSocket, reader: BinaryIO, device: str) -> None:
+    def __init__(self, sock: ssl.SSLSocket, reader: BinaryIO, device: str, slot: int = 0) -> None:
         self.device = device
         self.reader = reader
+        # La cámara a la que manda imagen.
+        self.slot = slot
         self._sock = sock
         self._outbox: queue.SimpleQueue[dict] = queue.SimpleQueue()
+        self._latest: dict[str, dict] = {}
+        self._latest_lock = threading.Lock()
         self.retiring = False
         # El celular cerró a propósito (por ejemplo, con «Detener»), no fue una falla de la red.
         self.closed_by_phone = False
 
     def send_control(self, command: dict) -> None:
         self._outbox.put(command)
+
+    def send_latest(self, key: str, command: dict) -> None:
+        """Para lo que cambia sin parar: si todavía no salió el anterior, este lo reemplaza."""
+        with self._latest_lock:
+            self._latest[key] = command
 
     def retire(self) -> None:
         """Otro celular tomó el lugar: se le avisa a este para que no vuelva a conectarse solo."""
@@ -81,7 +90,11 @@ class Session:
             try:
                 command = self._outbox.get_nowait()
             except queue.Empty:
-                return
+                break
+            self._sock.sendall(pack_control(command))
+        with self._latest_lock:
+            latest, self._latest = self._latest, {}
+        for command in latest.values():
             self._sock.sendall(pack_control(command))
 
     def interrupt(self) -> None:
@@ -100,9 +113,14 @@ class Session:
 class Listener:
     """Lo que el resto del programa quiere saber de las sesiones."""
 
+    def place(self, phone_id: str, device: str) -> int | None:
+        """La cámara que le toca a este celular; None si no hay lugar."""
+        return 0
+
     def on_connected(self, session: Session) -> None: ...
     def on_video(self, session: Session, frame: VideoFrame) -> None: ...
     def on_capture(self, session: Session, report: dict) -> None: ...
+    def on_battery(self, session: Session, report: dict) -> None: ...
     def on_disconnected(self, session: Session) -> None: ...
 
 
@@ -111,7 +129,7 @@ class StreamServer:
         self,
         identity: Identity,
         listener: Listener,
-        config: Callable[[], StreamConfig],
+        config: Callable[[int], StreamConfig],
         port: int = DEFAULT_PORT,
         host: str = "0.0.0.0",
     ) -> None:
@@ -126,7 +144,7 @@ class StreamServer:
         self._sock: socket.socket | None = None
         self._pending = threading.BoundedSemaphore(MAX_PENDING)
         self._lock = threading.Lock()
-        self._session: Session | None = None
+        self._sessions: dict[int, Session] = {}
         self._stopping = threading.Event()
         self.port = port
 
@@ -154,13 +172,14 @@ class StreamServer:
         if self._sock:
             self._sock.close()
         with self._lock:
-            session, self._session = self._session, None
-        if session:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
             session.interrupt()
 
-    def current(self) -> Session | None:
+    def current(self, slot: int = 0) -> Session | None:
         with self._lock:
-            return self._session
+            return self._sessions.get(slot)
 
     def _accept_loop(self) -> None:
         assert self._sock
@@ -206,7 +225,16 @@ class StreamServer:
             tls.sendall(pack_reply({"ok": False, "error": "version"}))
             tls.close()
             return None
-        config = self._config()
+        device = str(hello.get("device", "Celular"))[:60]
+        # Una app vieja no manda su identificador: se la reconoce por el modelo.
+        phone_id = str(hello.get("id") or device)[:80]
+        slot = self._listener.place(phone_id, device)
+        if slot is None:
+            tls.sendall(pack_reply({"ok": False, "error": "lleno"}))
+            log.info("Sin lugar para %s", device)
+            tls.close()
+            return None
+        config = self._config(slot)
         tls.sendall(
             pack_reply(
                 {
@@ -217,16 +245,17 @@ class StreamServer:
                     "kbps": config.kbps,
                     "pc": self._identity.pc_name,
                     "version": __version__,
+                    "camera": slot + 1,
                 }
             )
         )
         tls.settimeout(READ_TIMEOUT)
-        device = str(hello.get("device", "Celular"))[:60]
-        return Session(tls, reader, device)
+        return Session(tls, reader, device, slot)
 
     def _run(self, session: Session, peer: tuple) -> None:
         with self._lock:
-            previous, self._session = self._session, session
+            previous = self._sessions.get(session.slot)
+            self._sessions[session.slot] = session
         if previous:
             previous.retire()
         log.info("Conectado: %s desde %s", session.device, peer[0])
@@ -245,13 +274,14 @@ class StreamServer:
                         session.send_control({"cmd": "pong"})
                     elif command.get("cmd") == "capture":
                         self._listener.on_capture(session, command)
+                    elif command.get("cmd") == "battery":
+                        self._listener.on_battery(session, command)
         except (OSError, ValueError, ssl.SSLError, ProtocolError, ConnectionClosed) as exc:
             log.info("Sesión terminada (%s): %r", session.device, exc)
             session.closed_by_phone = isinstance(exc, ConnectionClosed)
         finally:
             with self._lock:
-                is_current = self._session is session
-                if is_current:
-                    self._session = None
+                if self._sessions.get(session.slot) is session:
+                    del self._sessions[session.slot]
             session.close()
             self._listener.on_disconnected(session)

@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 
 from celcam.identity import Identity
 from celcam.netinfo import is_usable, order_hosts
-from celcam.settings import QUALITIES, Settings
+from celcam.settings import QUALITIES, CameraSettings, Settings
 
 
 def test_identidad_persiste(tmp_path: Path):
@@ -76,21 +76,44 @@ def test_tamanos_multiplos_de_cuatro():
 
 def test_ajustes_ida_y_vuelta(tmp_path: Path):
     path = tmp_path / "ajustes.json"
-    Settings(quality="1080p", fps=60, mirror=True, extra_turns=2, fill=True).save(path)
+    settings = Settings()
+    settings.cameras[2] = CameraSettings(quality="1080p", fps=60, mirror=True, extra_turns=2, fill=True)
+    settings.phones["celular"] = 2
+    settings.save(path)
     loaded = Settings.load(path)
-    assert (loaded.quality, loaded.fps, loaded.mirror, loaded.extra_turns, loaded.fill) == ("1080p", 60, True, 2, True)
+    third = loaded.cameras[2]
+    assert (third.quality, third.fps, third.mirror, third.extra_turns, third.fill) == ("1080p", 60, True, 2, True)
+    assert loaded.cameras[0].quality == "720p"
+    assert loaded.phones == {"celular": 2}
+
+
+def test_los_ajustes_de_antes_son_los_de_la_primera_camara(tmp_path: Path):
+    path = tmp_path / "ajustes.json"
+    path.write_text('{"quality": "1080p", "fps": 60, "mirror": true, "extra_turns": 1, "fill": true, "hide_notice_shown": true}', encoding="utf-8")
+    loaded = Settings.load(path)
+    assert (loaded.cameras[0].quality, loaded.cameras[0].fps, loaded.cameras[0].mirror) == ("1080p", 60, True)
+    assert loaded.cameras[1].quality == "720p"
+    assert len(loaded.cameras) == 4
+    assert loaded.hide_notice_shown is True
+
+
+def test_un_lugar_danado_no_se_usa(tmp_path: Path):
+    path = tmp_path / "ajustes.json"
+    path.write_text('{"phones": {"a": 1, "b": 1, "c": 9, "d": "x", "e": 3}}', encoding="utf-8")
+    assert Settings.load(path).phones == {"a": 1, "e": 3}
 
 
 def test_mas_cuadros_piden_mas_calidad_de_video():
-    assert Settings(quality="720p", fps=30).kbps == 5000
-    assert Settings(quality="720p", fps=60).kbps == 7500
-    assert Settings(quality="1080p", fps=120).kbps == 18000
+    assert CameraSettings(quality="720p", fps=30).kbps == 5000
+    assert CameraSettings(quality="720p", fps=60).kbps == 7500
+    assert CameraSettings(quality="1080p", fps=120).kbps == 18000
 
 
 def test_ajustes_dañados_usan_valores_de_fabrica(tmp_path: Path):
     path = tmp_path / "ajustes.json"
     path.write_text("no es json", encoding="utf-8")
-    assert Settings.load(path).quality == "720p"
+    assert Settings.load(path).cameras[0].quality == "720p"
     path.write_text('{"quality": "4K", "extra_turns": "x", "fps": 999}', encoding="utf-8")
     loaded = Settings.load(path)
-    assert loaded.quality == "720p" and loaded.extra_turns == 0 and loaded.fps == 30
+    first = loaded.cameras[0]
+    assert first.quality == "720p" and first.extra_turns == 0 and first.fps == 30

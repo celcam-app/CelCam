@@ -100,11 +100,11 @@ class Adb:
         except subprocess.TimeoutExpired as exc:
             raise UsbError("El celular no respondió. Desconecta el cable y vuelve a conectarlo.") from exc
 
-    def find_device(self) -> Device:
+    def find_devices(self) -> list[Device]:
         devices = parse_devices(self._run("devices").stdout)
         ready = [d for d in devices if d.state == "device"]
         if ready:
-            return ready[0]
+            return ready
         if any(d.state == "unauthorized" for d in devices):
             raise UsbError("Acepta el cartel «¿Permitir depuración por USB?» en el celular y vuelve a tocar el botón.")
         raise UsbError(
@@ -112,10 +112,25 @@ class Adb:
             "Opciones de desarrollador del celular."
         )
 
-    def connect(self, port: int, link_for_usb: str, apk: Path) -> str:
-        """Deja el celular listo para conectarse y abre la app. Devuelve el número de serie."""
-        device = self.find_device()
-        serial = device.serial
+    def connect(self, port: int, link_for_usb: str, apk: Path) -> list[str]:
+        """Deja listos todos los celulares enchufados y abre la app. Devuelve sus números de serie.
+
+        A uno que ya está transmitiendo no le pasa nada: la app ignora el enlace.
+        """
+        connected: list[str] = []
+        problem: UsbError | None = None
+        for device in self.find_devices():
+            try:
+                self._connect_one(device.serial, port, link_for_usb, apk)
+                connected.append(device.serial)
+            except UsbError as exc:
+                log.warning("%s: %s", device.serial, exc)
+                problem = exc
+        if not connected and problem:
+            raise problem
+        return connected
+
+    def _connect_one(self, serial: str, port: int, link_for_usb: str, apk: Path) -> None:
         installed = self._run("-s", serial, "shell", "pm", "path", PACKAGE)
         if "package:" not in installed.stdout:
             if not apk.exists():
@@ -134,7 +149,6 @@ class Adb:
         if start.returncode != 0 or "Error" in start.stdout:
             log.warning("am start: %s %s", start.stdout, start.stderr)
             raise UsbError("No se pudo abrir la app en el celular. Ábrela a mano.")
-        return serial
 
     def shutdown(self) -> None:
         if self.used:

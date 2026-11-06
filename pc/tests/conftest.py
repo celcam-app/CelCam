@@ -57,14 +57,17 @@ def encode_h264(width: int, height: int, count: int, color_rgb=(0, 200, 0)) -> l
 class FakePhone:
     """Se conecta como la app de Android."""
 
-    def __init__(self, port: int, token: str, fingerprint: str | None = None) -> None:
+    def __init__(self, port: int, token: str, fingerprint: str | None = None, phone_id: str | None = None, device: str = "Prueba") -> None:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         self.sock = ctx.wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=5))
         self.reader = self.sock.makefile("rb", buffering=64 * 1024)
         self.peer_der = self.sock.getpeercert(binary_form=True)
-        raw = protocol.json.dumps({"token": token, "proto": protocol.PROTO, "device": "Prueba"}).encode()
+        hello = {"token": token, "proto": protocol.PROTO, "device": device}
+        if phone_id:
+            hello["id"] = phone_id
+        raw = protocol.json.dumps(hello).encode()
         self.sock.sendall(protocol.MAGIC + protocol._LENGTH.pack(len(raw)) + raw)
         self.reply = protocol._read_json(self.reader)
 

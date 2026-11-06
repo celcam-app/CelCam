@@ -5,11 +5,14 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.SurfaceTexture
 import android.net.wifi.WifiManager
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -40,6 +43,7 @@ data class StreamState(
     val pcName: String = "",
     val problem: String? = null,
     val capture: CaptureInfo? = null,
+    val dimmed: Boolean = false,
 )
 
 /** Mantiene la transmisión aunque la pantalla se apague o se cambie de app. */
@@ -59,6 +63,36 @@ class StreamService : Service() {
 
     // Lo que la cámara puede hacer, para avisarle a la PC. Solo el hilo de envío escribe en la red.
     private val pendingReport = AtomicReference<JSONObject?>()
+    private val pendingBattery = AtomicReference<JSONObject?>()
+
+    private var lastCapture: CaptureInfo? = null
+
+    @Volatile
+    private var lastBattery: JSONObject? = null
+
+    // Oscurecer la pantalla se puede pedir desde el celular o desde la PC.
+    @Volatile
+    private var dimmed = false
+
+    // La PC pidió detener: el celular cuenta por qué se paró, y no vuelve a conectarse solo.
+    @Volatile
+    private var stoppedByPc = false
+
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            if (level < 0 || scale <= 0) return
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+            val percent = level * 100 / scale
+            val known = lastBattery
+            if (known != null && known.optInt("level") == percent && known.optBoolean("charging") == charging) return
+            val report = JSONObject().put("cmd", "battery").put("level", percent).put("charging", charging)
+            lastBattery = report
+            pendingBattery.set(report)
+        }
+    }
 
     @Volatile
     private var stopping = false
@@ -100,6 +134,12 @@ class StreamService : Service() {
             }
         }
         orientation.enable()
+        ContextCompat.registerReceiver(
+            this,
+            batteryReceiver,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         instance = this
     }
 
@@ -115,6 +155,7 @@ class StreamService : Service() {
         }
         if (worker == null) {
             stopping = false
+            stoppedByPc = false
             acquireLocks()
             worker = thread(name = "celcam-sesion") { runSessions(pairing) }
         }
@@ -184,12 +225,13 @@ class StreamService : Service() {
     private fun runSessions(pairing: Pairing) {
         var backoff = FIRST_RETRY_MS
         val device = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
+        val phoneId = PhoneId.get(this)
         try {
             while (!stopping) {
                 publish(StreamState(Phase.CONNECTING, pairing.pcName))
                 var sessionStart = 0L
                 try {
-                    val conn = Connection.connect(pairing, device, BuildConfig.VERSION_NAME)
+                    val conn = Connection.connect(pairing, device, BuildConfig.VERSION_NAME, phoneId)
                     connection = conn
                     // Se guarda recién acá: un enlace o un QR equivocado no pisa la PC que ya andaba.
                     pairing.mergedWith(Pairing.load(this)).save(this)
@@ -207,6 +249,10 @@ class StreamService : Service() {
                     // Solo se olvida si era el código guardado: un enlace falso no borra el bueno.
                     if (Pairing.load(this)?.token == pairing.token) Pairing.clear(this)
                     publish(StreamState(Phase.REJECTED, pairing.pcName, getString(R.string.problema_codigo)))
+                    return
+                } catch (_: FullException) {
+                    // Sin reintentar: se libera un lugar cuando alguien desconecta su celular.
+                    publish(StreamState(Phase.IDLE, problem = getString(R.string.problema_lleno)))
                     return
                 } catch (_: ReplacedException) {
                     // Sin reintentar: si no, dos celulares se quitarían la conexión sin parar.
@@ -231,14 +277,17 @@ class StreamService : Service() {
                 Thread.sleep(backoff)
                 backoff = min(backoff * 2, MAX_RETRY_MS)
             }
-            publish(StreamState(Phase.IDLE))
+            publish(idleState())
         } catch (_: InterruptedException) {
-            publish(StreamState(Phase.IDLE))
+            publish(idleState())
         } finally {
             capture.stop()
             mainHandler.post(::finish)
         }
     }
+
+    private fun idleState() =
+        StreamState(Phase.IDLE, problem = if (stoppedByPc) getString(R.string.detenido_desde_pc) else null)
 
     private fun runSession(conn: Connection) {
         targetBitrate = conn.config.kbps * 1000
@@ -248,7 +297,10 @@ class StreamService : Service() {
         waitingForKey = true
         queueLimit = queueLimitFor(conn.config.fps)
         queue.clear()
-        publish(StreamState(Phase.STREAMING, conn.pcName))
+        // La primera cámara se llama igual que la app: solo las otras necesitan aclaración.
+        val target = if (conn.camera > 1) getString(R.string.pc_y_camara, conn.pcName, conn.camera) else conn.pcName
+        publish(StreamState(Phase.STREAMING, target))
+        pendingBattery.set(lastBattery)
         capture.start(conn.config, currentBitrate)
         val sender = thread(name = "celcam-envio") { sendLoop(conn) }
         try {
@@ -277,6 +329,15 @@ class StreamService : Service() {
             }
             "bye" -> throw ReplacedException()
             "pong" -> Unit
+            // Lo mismo que los botones de la pantalla, pedido desde la PC.
+            "camera" -> switchCamera()
+            "torch" -> setTorch(command.optBoolean("on"))
+            "zoom" -> command.optDouble("value").takeUnless { it.isNaN() }?.let { setZoom(it.toFloat()) }
+            "dim" -> setDim(command.optBoolean("on"))
+            "stop" -> {
+                stoppedByPc = true
+                requestStop()
+            }
             else -> Log.i(TAG, "Comando desconocido de ${conn.pcName}")
         }
     }
@@ -287,6 +348,7 @@ class StreamService : Service() {
             while (!Thread.currentThread().isInterrupted) {
                 queue.poll(POLL_MS, TimeUnit.MILLISECONDS)?.let(conn::sendVideo)
                 pendingReport.getAndSet(null)?.let(conn::sendControl)
+                pendingBattery.getAndSet(null)?.let(conn::sendControl)
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastPing >= PING_MS) {
                     conn.sendControl(JSONObject().put("cmd", "ping"))
@@ -347,17 +409,36 @@ class StreamService : Service() {
     fun setTorch(on: Boolean) = capture.setTorch(on)
 
     @Synchronized
+    fun setDim(on: Boolean) {
+        dimmed = on
+        publish(state)
+        lastCapture?.let(::reportCapture)
+    }
+
+    @Synchronized
     private fun onCaptureInfo(info: CaptureInfo) {
         // Según los cuadros que da la cámara, no los pedidos: si no, la cola guarda mucho más tiempo de lo previsto.
         queueLimit = queueLimitFor(info.fps)
+        lastCapture = info
         publish(state.copy(capture = info))
+        reportCapture(info)
+    }
+
+    private fun reportCapture(info: CaptureInfo) {
         pendingReport.set(
             JSONObject()
                 .put("cmd", "capture")
                 .put("w", info.width)
                 .put("h", info.height)
                 .put("fps", info.fps)
-                .put("rates", info.rates),
+                .put("rates", info.rates)
+                .put("zoom_min", info.zoomMin.toDouble())
+                .put("zoom_max", info.zoomMax.toDouble())
+                .put("zoom", info.zoom.toDouble())
+                .put("torch_available", info.torchAvailable)
+                .put("torch", info.torchOn)
+                .put("can_switch", info.canSwitch)
+                .put("dim", dimmed),
         )
     }
 
@@ -368,8 +449,8 @@ class StreamService : Service() {
 
     @Synchronized
     private fun publish(newState: StreamState) {
-        state = newState
-        live.postValue(newState)
+        state = newState.copy(dimmed = dimmed && newState.phase != Phase.IDLE && newState.phase != Phase.REJECTED)
+        live.postValue(state)
     }
 
     // Apagado
@@ -383,6 +464,8 @@ class StreamService : Service() {
 
     private fun finish() {
         worker = null
+        dimmed = false
+        lastCapture = null
         releaseLocks()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -394,6 +477,7 @@ class StreamService : Service() {
         worker?.interrupt()
         connection?.close()
         orientation.disable()
+        unregisterReceiver(batteryReceiver)
         capture.release()
         releaseLocks()
         super.onDestroy()

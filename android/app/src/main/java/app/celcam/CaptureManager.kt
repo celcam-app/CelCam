@@ -189,6 +189,8 @@ class CaptureManager(
     fun setZoom(value: Float) = handler.post {
         zoom = value
         updateRepeating()
+        // Para que la pantalla del celular y la de la PC muestren lo mismo.
+        publishInfo()
     }
 
     fun setTorch(on: Boolean) = handler.post {

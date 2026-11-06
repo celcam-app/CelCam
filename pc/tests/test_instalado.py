@@ -21,7 +21,7 @@ import pytest
 from celcam import __version__, paths
 from celcam.identity import Identity
 from celcam.protocol import DEFAULT_PORT
-from celcam.vcam import CAMERA_CLSID, is_registered
+from celcam.vcam import CAMERA_CLSIDS, CAMERA_NAMES, is_registered
 from conftest import FakePhone, encode_h264, wait_for
 
 INSTALLED = os.environ.get("CELCAM_INSTALADO")
@@ -111,17 +111,18 @@ def phone_stream(program):
 
 
 def test_la_camara_quedo_registrada_para_apps_de_64_y_de_32_bits():
-    assert is_registered()
-    for view, folder in ((winreg.KEY_WOW64_64KEY, "x64"), (winreg.KEY_WOW64_32KEY, "x86")):
-        access = winreg.KEY_READ | view
-        path = rf"SOFTWARE\Classes\CLSID\{CAMERA_CLSID}\InprocServer32"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, access) as key:
-            dll = winreg.QueryValueEx(key, None)[0]
-        assert os.path.samefile(dll, Path(INSTALLED) / "vcam" / folder / "celcam_vcam.dll")
-        # El filtro se registra con su nombre (softcam.cpp).
-        path = rf"SOFTWARE\Classes\CLSID\{CATEGORY}\Instance\CelCam"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, access) as key:
-            assert winreg.QueryValueEx(key, "FriendlyName")[0] == "CelCam"
+    for index, (clsid, name) in enumerate(zip(CAMERA_CLSIDS, CAMERA_NAMES)):
+        assert is_registered(index)
+        for view, folder in ((winreg.KEY_WOW64_64KEY, "x64"), (winreg.KEY_WOW64_32KEY, "x86")):
+            access = winreg.KEY_READ | view
+            path = rf"SOFTWARE\Classes\CLSID\{clsid}\InprocServer32"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, access) as key:
+                dll = winreg.QueryValueEx(key, None)[0]
+            assert os.path.samefile(dll, Path(INSTALLED) / "vcam" / folder / "celcam_vcam.dll")
+            # El filtro se registra con su nombre (softcam.cpp).
+            path = rf"SOFTWARE\Classes\CLSID\{CATEGORY}\Instance\{name}"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, access) as key:
+                assert winreg.QueryValueEx(key, "FriendlyName")[0] == name
 
 
 def test_el_firewall_deja_entrar_al_celular():
@@ -138,7 +139,7 @@ def test_el_programa_arranca_con_ventana_e_icono(program):
     assert wait_for(_window_visible, timeout=20), "No apareció la ventana"
     log = _log()
     assert f"CelCam {__version__} arrancando" in log
-    assert "Cámara virtual abierta" in log
+    assert "CelCam abierta" in log
     assert "No se pudo" not in log
 
 

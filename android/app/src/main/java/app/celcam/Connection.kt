@@ -23,6 +23,9 @@ import kotlin.concurrent.thread
 /** La PC rechazó el código: hay que volver a escanear el QR. */
 class RejectedException(reason: String) : IOException(reason)
 
+/** La PC ya tiene un celular en cada una de sus cámaras. */
+class FullException : IOException("Sin lugar en la PC")
+
 /** Otro celular tomó la conexión con esta PC. */
 class ReplacedException : IOException("Reemplazado por otro celular")
 
@@ -41,6 +44,8 @@ class Connection private constructor(
     private val output: DataOutputStream,
     val config: StreamConfig,
     val pcName: String,
+    /** A cuál de las cámaras de la PC llega la imagen, empezando por 1. */
+    val camera: Int,
 ) {
     private val writeLock = Any()
 
@@ -101,15 +106,17 @@ class Connection private constructor(
         private const val READ_TIMEOUT_MS = 15000
         private const val SEND_BUFFER = 128 * 1024
 
-        fun connect(pairing: Pairing, device: String, appVersion: String): Connection {
+        fun connect(pairing: Pairing, device: String, appVersion: String, phoneId: String): Connection {
             val remaining = pairing.hosts.toMutableList()
             var lastError = IOException("No respondió ninguna dirección")
             var unknownPc: UnknownPcException? = null
             while (remaining.isNotEmpty()) {
                 val (host, socket) = raceTcp(remaining, pairing.port) ?: break
                 try {
-                    return handshake(socket, host, pairing, device, appVersion)
+                    return handshake(socket, host, pairing, device, appVersion, phoneId)
                 } catch (e: RejectedException) {
+                    throw e
+                } catch (e: FullException) {
                     throw e
                 } catch (e: UnknownPcException) {
                     // Una dirección vieja ahora puede ser de otra PC con CelCam: se siguen probando las demás.
@@ -176,6 +183,7 @@ class Connection private constructor(
             pairing: Pairing,
             device: String,
             appVersion: String,
+            phoneId: String,
         ): Connection {
             plain.tcpNoDelay = true
             plain.sendBufferSize = SEND_BUFFER
@@ -196,6 +204,7 @@ class Connection private constructor(
                 .put("token", pairing.token)
                 .put("proto", PROTO)
                 .put("device", device)
+                .put("id", phoneId)
                 .put("app", appVersion)
                 .toString()
                 .toByteArray()
@@ -209,10 +218,14 @@ class Connection private constructor(
             val raw = ByteArray(size)
             input.readFully(raw)
             val reply = JSONObject(String(raw))
-            if (!reply.optBoolean("ok")) throw RejectedException(reply.optString("error"))
+            if (!reply.optBoolean("ok")) {
+                if (reply.optString("error") == "lleno") throw FullException()
+                throw RejectedException(reply.optString("error"))
+            }
             tls.soTimeout = READ_TIMEOUT_MS
             val config = StreamConfig(reply.getInt("w"), reply.getInt("h"), reply.getInt("fps"), reply.getInt("kbps"))
-            return Connection(tls, plain, input, output, config, reply.optString("pc", pairing.pcName))
+            val pcName = reply.optString("pc", pairing.pcName)
+            return Connection(tls, plain, input, output, config, pcName, reply.optInt("camera", 1))
         }
 
         private fun closeQuietly(socket: Socket) {

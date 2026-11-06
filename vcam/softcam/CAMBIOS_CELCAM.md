@@ -18,6 +18,10 @@ This folder is [Softcam](https://github.com/tshino/softcam) by tshino (MIT licen
   120 frames per second. The rate is informative: frames are delivered as they arrive.
 - **Real timestamps:** each sample carries the graph's stream time instead of a fixed counter, and quality messages no
   longer change the timing.
+- **Four cameras:** `CelCam`, `CelCam 2`, `CelCam 3` and `CelCam 4`, each with its own CLSID, shared memory and
+  remembered format (`HKCU\\Software\\CelCam\\Camara<N>` from the second one on). `scCreateCamera` takes the camera index.
+- **Frames with transparency:** a camera can receive BGRA. Only then does it offer ARGB32, so normal use sees no new
+  formats. An application that negotiates RGB24 sees the image over a dark color.
 - The upstream tests in `tests` were not adapted to these changes and are not part of the build.
 - **30 fps declared** when the sender sets no frame rate (it was 60).
 - **Static C runtime** in Release builds, so it needs no Visual C++ redistributable.

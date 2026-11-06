@@ -80,8 +80,8 @@ class MainActivity : AppCompatActivity() {
         connectButton.setOnClickListener { Pairing.load(this)?.let(::requestStart) }
         switchButton.setOnClickListener { StreamService.instance?.switchCamera() }
         torchButton.setOnClickListener { capture?.let { StreamService.instance?.setTorch(!it.torchOn) } }
-        findViewById<Button>(R.id.dim_button).setOnClickListener { setDimmed(true) }
-        dimOverlay.setOnClickListener { setDimmed(false) }
+        findViewById<Button>(R.id.dim_button).setOnClickListener { StreamService.instance?.setDim(true) }
+        dimOverlay.setOnClickListener { StreamService.instance?.setDim(false) }
         findViewById<Button>(R.id.stop_button).setOnClickListener { StreamService.stop(this) }
         zoomBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -193,8 +193,8 @@ class MainActivity : AppCompatActivity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            setDimmed(false)
         }
+        setDimmed(active && state.dimmed)
         statusText.text = when (state.phase) {
             Phase.STREAMING -> state.capture?.let { getString(R.string.estado_transmitiendo_fps, state.pcName, it.fps) }
                 ?: getString(R.string.estado_transmitiendo, state.pcName)
@@ -245,6 +245,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setDimmed(dimmed: Boolean) {
+        if (dimOverlay.isVisible == dimmed) return
         dimOverlay.isVisible = dimmed
         val attributes = window.attributes
         attributes.screenBrightness = if (dimmed) {

@@ -47,24 +47,44 @@ def test_lee_la_lista_de_dispositivos():
 def test_sin_celular_explica_que_hacer(tmp_path):
     adb = ScriptedAdb(tmp_path, "List of devices attached\n\n")
     with pytest.raises(UsbError, match="Depuración por USB"):
-        adb.find_device()
+        adb.find_devices()
 
 
 def test_sin_autorizar_pide_aceptar(tmp_path):
     adb = ScriptedAdb(tmp_path, "List of devices attached\nABC\tunauthorized\n")
     with pytest.raises(UsbError, match="Permitir"):
-        adb.find_device()
+        adb.find_devices()
 
 
 def test_conecta_redirige_y_abre_la_app(tmp_path):
     adb = ScriptedAdb(tmp_path, "List of devices attached\nABC\tdevice\n")
     link = "celcam://pair?h=127.0.0.1&p=47470&t=abc&f=def"
-    assert adb.connect(47470, link, tmp_path / "CelCam.apk") == "ABC"
+    assert adb.connect(47470, link, tmp_path / "CelCam.apk") == ["ABC"]
     assert ("-s", "ABC", "reverse", "tcp:47470", "tcp:47470") in adb.calls
     start = next(call for call in adb.calls if "am" in call)
     # Entre comillas: la consola del celular cortaría el enlace en cada «&».
     assert f"'{link}'" in start
     assert not any("install" in call for call in adb.calls)
+
+
+def test_conecta_todos_los_celulares_enchufados(tmp_path):
+    adb = ScriptedAdb(tmp_path, "List of devices attached\nABC\tdevice\nDEF\tdevice\nGHI\tunauthorized\n")
+    assert adb.connect(47470, "celcam://pair", tmp_path / "CelCam.apk") == ["ABC", "DEF"]
+    for serial in ("ABC", "DEF"):
+        assert ("-s", serial, "reverse", "tcp:47470", "tcp:47470") in adb.calls
+
+
+def test_si_falla_uno_sigue_con_los_demas(tmp_path):
+    adb = ScriptedAdb(tmp_path, "List of devices attached\nABC\tdevice\nDEF\tdevice\n", installed=False)
+    original = adb._run
+
+    def only_second_has_the_app(*args, **kwargs):
+        if "pm" in args and "DEF" in args:
+            return _result("package:/data/app/base.apk")
+        return original(*args, **kwargs)
+
+    adb._run = only_second_has_the_app
+    assert adb.connect(47470, "celcam://pair", tmp_path / "no-existe.apk") == ["DEF"]
 
 
 def test_instala_la_app_si_falta(tmp_path):
@@ -85,7 +105,7 @@ def test_adb_faltante_da_un_mensaje_claro(tmp_path):
     adb = Adb(tmp_path / "no-existe.exe")
     assert not adb.available()
     with pytest.raises(UsbError, match="descargarlo"):
-        adb.find_device()
+        adb.find_devices()
 
 
 @pytest.fixture

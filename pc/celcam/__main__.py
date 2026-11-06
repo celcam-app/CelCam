@@ -14,7 +14,7 @@ from .core import Core
 from .identity import Identity
 from .settings import Settings
 from .tray import ShowSignal, ask_running_copy_to_show
-from .vcam import CameraBusy, NullCamera, VirtualCamera, is_registered
+from .vcam import CAMERA_COUNT, CAMERA_NAMES, CameraBusy, NullCamera, VirtualCamera, is_registered
 
 log = logging.getLogger("celcam")
 
@@ -40,28 +40,39 @@ def _already_running() -> bool:
     return bool(mutex) and ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS
 
 
-def _open_camera(settings: Settings):
-    """Devuelve la cámara y, si algo falla, el aviso para mostrar en la ventana."""
-    width, height = settings.size
+def _open_cameras(settings: Settings):
+    """Devuelve las cámaras y, si algo falla, el aviso para mostrar en la ventana."""
+    cameras = []
+    problem = None
     dll = paths.vcam_dll()
-    try:
-        camera = VirtualCamera(dll)
-        camera.open(width, height, settings.fps)
-    except CameraBusy:
-        log.warning("Cámara virtual ocupada")
-        return NullCamera(width, height), "La cámara virtual está ocupada. Cierra las apps que la usan y abre CelCam otra vez."
-    except OSError as exc:
-        log.exception("No se pudo cargar %s", dll)
-        # PyInstaller envuelve el error original.
-        if WINERROR_APP_CONTROL in (getattr(exc, "winerror", None), getattr(exc.__cause__, "winerror", None)):
-            return NullCamera(width, height), (
-                "Windows bloqueó la cámara virtual porque CelCam no tiene firma digital "
-                "(Control inteligente de aplicaciones). Las apps no van a poder verla en esta PC."
-            )
-        return NullCamera(width, height), "No se pudo cargar la cámara virtual. Reinstala CelCam."
-    if not is_registered():
-        return camera, "La cámara virtual no está instalada en Windows, así que las apps no la van a ver. Reinstala CelCam."
-    return camera, None
+    for index in range(CAMERA_COUNT):
+        width, height = settings.cameras[index].size
+        fps = settings.cameras[index].fps
+        try:
+            camera = VirtualCamera(dll, index)
+            # Una app que estaba usando la cámara tarda un momento en soltarla: alcanza con esperar por la primera.
+            camera.open(width, height, fps, wait_seconds=8.0 if index == 0 else 1.0)
+        except CameraBusy:
+            log.warning("%s ocupada", CAMERA_NAMES[index])
+            camera = NullCamera(width, height)
+            problem = problem or f"{CAMERA_NAMES[index]} está ocupada. Cierra las apps que la usan y abre CelCam otra vez."
+        except OSError as exc:
+            log.exception("No se pudo cargar %s", dll)
+            # PyInstaller envuelve el error original.
+            if WINERROR_APP_CONTROL in (getattr(exc, "winerror", None), getattr(exc.__cause__, "winerror", None)):
+                problem = (
+                    "Windows bloqueó la cámara virtual porque CelCam no tiene firma digital "
+                    "(Control inteligente de aplicaciones). Las apps no van a poder verla en esta PC."
+                )
+            else:
+                problem = "No se pudo cargar la cámara virtual. Reinstala CelCam."
+            camera = NullCamera(width, height)
+        cameras.append(camera)
+    missing = [CAMERA_NAMES[i] for i in range(CAMERA_COUNT) if not is_registered(i)]
+    if missing and problem is None:
+        log.warning("Sin registrar en Windows: %s", ", ".join(missing))
+        problem = "La cámara virtual no está instalada en Windows, así que las apps no la van a ver. Reinstala CelCam."
+    return cameras, problem
 
 
 def _run_headless(core: Core) -> int:
@@ -93,9 +104,9 @@ def main() -> int:
         return 0
 
     show_signal = ShowSignal()
-    camera, problem = _open_camera(settings)
+    cameras, problem = _open_cameras(settings)
     identity = Identity.load_or_create(data)
-    core = Core(settings, identity, camera, settings_path)
+    core = Core(settings, identity, cameras, settings_path)
     try:
         core.start()
     except OSError:

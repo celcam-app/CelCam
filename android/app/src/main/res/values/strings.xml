@@ -29,5 +29,8 @@
     <string name="problema_reconectando">No se encuentra la PC. Revisa que CelCam esté abierto y que estén en el mismo WiFi.</string>
     <string name="problema_otra_pc">No se pudo confirmar que sea tu PC. Escanea otra vez el código que aparece en CelCam.</string>
     <string name="problema_reemplazado">Otro celular se conectó a esta PC. Toca Conectar para volver a usar este.</string>
+    <string name="problema_lleno">Esta PC ya tiene un celular en cada una de sus 4 cámaras. Desconecta uno y vuelve a tocar Conectar.</string>
+    <string name="detenido_desde_pc">Se detuvo desde la PC. Toca Conectar para volver a transmitir.</string>
+    <string name="pc_y_camara">%1$s (CelCam %2$d)</string>
     <string name="problema_primer_plano">Android no dejó usar la cámara. Abre CelCam y vuelve a tocar Conectar.</string>
 </resources>
