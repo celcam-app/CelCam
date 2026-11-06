@@ -207,13 +207,16 @@ class CameraChannel:
 
     def _start_runner(self, size: tuple[int, int], background: str) -> None:
         s = self.settings
+        # La ventana cambia el ajuste un momento antes de que este avatar se detenga:
+        # lo que dibuja sigue siendo para el modo con el que se creó.
+        over_video = s.avatar_mode == "sobre"
         self._runner = AvatarRunner(
             s.avatar_style,
             s.avatar_id,
             size,
             background,
             self._core.sensors(),
-            self._on_avatar_frame,
+            lambda frame: self._on_avatar_frame(frame, over_video),
             s.avatar_keys,
             s.avatar_voice,
             self.name,
@@ -227,8 +230,8 @@ class CameraChannel:
         self._overlay = None
         self._shown = None
 
-    def _on_avatar_frame(self, frame: np.ndarray) -> None:
-        if self.settings.avatar_mode == "solo":
+    def _on_avatar_frame(self, frame: np.ndarray, over_video: bool) -> None:
+        if not over_video:
             self._shown = frame
             self.camera.send(frame)
             return

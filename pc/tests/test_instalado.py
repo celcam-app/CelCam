@@ -21,6 +21,7 @@ import pytest
 from celcam import __version__, paths
 from celcam.identity import Identity
 from celcam.protocol import DEFAULT_PORT
+from celcam.settings import CameraSettings, Settings
 from celcam.vcam import CAMERA_CLSIDS, CAMERA_NAMES, is_registered
 from conftest import FakePhone, encode_h264, wait_for
 
@@ -57,10 +58,10 @@ def _log() -> str:
     return (paths.data_dir() / "celcam.log").read_text(encoding="utf-8")
 
 
-def _capture(seconds: float) -> np.ndarray:
+def _capture(seconds: float, camera: str = "CelCam") -> np.ndarray:
     """Abre la cámara como lo haría una app y devuelve la última imagen."""
     image = None
-    with av.open("video=CelCam", format="dshow", options={"rtbufsize": "100M"}) as box:
+    with av.open(f"video={camera}", format="dshow", options={"rtbufsize": "100M"}) as box:
         start = time.monotonic()
         for frame in box.decode(box.streams.video[0]):
             image = frame.to_ndarray(format="rgb24")
@@ -77,6 +78,12 @@ def _looks_like(image: np.ndarray, x: float, y: float, color: tuple[int, int, in
 
 @pytest.fixture(scope="module")
 def program():
+    # Un avatar de cada estilo en las últimas cámaras: la primera sigue siendo para el celular.
+    settings = Settings()
+    for index, style in ((2, "dibujado"), (3, "volumen")):
+        settings.cameras[index] = CameraSettings(avatar_mode="solo", avatar_style=style, avatar_id="tuntun", avatar_keys=False, avatar_voice=False)
+    paths.data_dir().mkdir(parents=True, exist_ok=True)
+    settings.save(paths.data_dir() / "ajustes.json")
     process = subprocess.Popen([str(_exe())])
     try:
         assert wait_for(lambda: _listening(DEFAULT_PORT), timeout=90), "El programa no abrió su puerto"
@@ -149,6 +156,17 @@ def test_sin_celular_la_app_ve_la_imagen_de_espera(program):
     # Fondo oscuro con el texto claro.
     assert _looks_like(image, 0.05, 0.05, (17, 19, 24))
     assert image.max() > 200
+
+
+@pytest.mark.parametrize("camera", ["CelCam 3", "CelCam 4"])
+def test_los_dos_estilos_de_avatar_llegan_a_la_camara(program, camera):
+    def avatar_visible() -> bool:
+        image = _capture(1.0, camera)
+        # La imagen de espera tiene pocos colores; un avatar, miles.
+        return image.shape == (720, 1280, 3) and len(np.unique(image.reshape(-1, 3), axis=0)) > 3000
+
+    assert wait_for(avatar_visible, timeout=45), "El avatar no llegó a la cámara"
+    assert "Falló el avatar" not in _log()
 
 
 def test_del_celular_a_la_app_que_abre_la_camara(phone_stream):

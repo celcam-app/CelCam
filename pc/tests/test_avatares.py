@@ -262,6 +262,27 @@ def test_el_avatar_chico_va_sobre_el_video_del_celular(identity):
         core.stop()
 
 
+def test_al_cambiar_de_modo_el_avatar_anterior_no_falla(identity):
+    core, cameras = _core(identity, _settings(avatar_mode="solo"))
+    core._sensors = FakeSensors()
+    core.start()
+    try:
+        channel = core.channels[0]
+        assert wait_for(lambda: channel.status().avatar_ready, timeout=15)
+        anterior = channel._runner
+        # La ventana cambia el ajuste un momento antes de que el avatar anterior se detenga.
+        channel.settings.avatar_mode = "sobre"
+        time.sleep(0.3)
+        assert not anterior.failed
+        channel.apply_avatar()
+        assert wait_for(lambda: channel.status().avatar_ready, timeout=15)
+        assert wait_for(lambda: channel._overlay is not None)
+        assert channel._overlay.shape[2] == 4
+        assert not channel.status().avatar_failed
+    finally:
+        core.stop()
+
+
 def test_con_solo_avatar_el_video_del_celular_no_llega_a_la_camara(identity):
     core, cameras = _core(identity, _settings(avatar_mode="solo"))
     core._sensors = FakeSensors()

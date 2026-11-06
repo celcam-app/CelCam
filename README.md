@@ -8,13 +8,18 @@ Use your Android phone as a webcam on Windows. Free, open source, no ads, no acc
 
 ## What it does
 
-CelCam has two parts: an Android app and a Windows program. The Windows program creates a virtual camera called
-"CelCam", which video apps can pick like any webcam. The phone sends its video directly to the PC over your WiFi or a
-USB cable. Nothing goes through a server.
+CelCam has two parts: an Android app and a Windows program. The Windows program creates virtual cameras called
+"CelCam", "CelCam 2", "CelCam 3" and "CelCam 4", which video apps can pick like any webcam. The phone sends its video
+directly to the PC over your WiFi or a USB cable. Nothing goes through a server.
 
 - Up to 1080p and 30, 60 or 120 frames per second, if the phone's camera supports it (the app uses the fastest it can)
 - Connect by scanning a QR code, or with a USB cable
-- Front and rear cameras, zoom, flashlight, rotate and mirror
+- Up to four phones at once, each one always on its own camera
+- Front and rear cameras, zoom, flashlight, rotate and mirror, from the phone or from the PC
+- See the phone's battery on the PC, with a warning when it runs low
+- Avatars that work without a phone: they follow your mouse, light up the keys you press and move their mouth when you
+  speak. Eight characters in two styles, with a normal, transparent (OBS) or green background, alone or small over your
+  video
 - The stream keeps running with the phone's screen off
 - Closing the window keeps CelCam running, with an icon next to the clock
 - Change quality or frame rate while an app is using the camera, without choosing it again
@@ -71,6 +76,11 @@ In practice: video goes only from your phone to the PC you paired it with. There
 connect by USB cable, CelCam asks first and then downloads Android's `adb` tool from Google, under
 [Google's terms](https://developer.android.com/studio/terms).
 
+Only while an avatar is on, CelCam reads which keys are pressed, where the mouse is and how loud your microphone is, to
+animate the character. It does not save any of this or send it anywhere, and no audio is recorded. The pressed keys can
+be seen in the camera image, so turn off "Mostrar mis teclas" before typing a password. You can also turn off the
+voice option.
+
 ## Changes the installer makes
 
 The installer registers the virtual camera and adds a Windows Firewall rule so the phone can connect to CelCam. It
@@ -96,6 +106,16 @@ cuentas. El video va directo del celular a tu PC, por WiFi o por cable USB, sin 
 
 **Con qué funciona:** se probó con OBS Studio, Discord y Microsoft Edge. Las demás apps que usan cámaras DirectShow
 también deberían verla. La app Cámara de Windows y las de la Tienda todavía no la ven.
+
+**Varios celulares:** hasta cuatro a la vez, cada uno en su cámara (CelCam, CelCam 2, 3 y 4). Desde la PC puedes
+cambiar de cámara, usar la linterna y el zoom, oscurecer la pantalla, detener y ver la batería de cada celular.
+
+**Avatares:** funcionan sin celular. Siguen tu mouse, iluminan las teclas que tocas y mueven la boca cuando hablas. Hay
+ocho personajes en dos estilos, con fondo normal, transparente (para OBS) o verde, solos o chicos sobre tu video.
+
+**Privacidad de los avatares:** solo con un avatar prendido, CelCam lee qué teclas tocas, dónde está el mouse y el
+volumen del micrófono. No guarda ni envía nada, y no graba audio. Las teclas se ven en la imagen de la cámara: apaga
+«Mostrar mis teclas» antes de escribir una contraseña.
 
 **Para cerrarla:** con la X, CelCam sigue funcionando con un ícono junto al reloj. Para cerrarla del todo, abre ese
 ícono y elige «Salir».
