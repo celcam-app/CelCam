@@ -62,9 +62,9 @@ function offer() {
     "a=end-of-candidates",
     "a=mid:0", "a=recvonly", "a=rtcp-mux", "a=rtcp-rsize",
     "a=rtpmap:96 H264/90000",
-    "a=rtcp-fb:96 nack", "a=rtcp-fb:96 nack pli", "a=rtcp-fb:96 goog-remb",
-    "a=extmap:1 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
-    "a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+    "a=rtcp-fb:96 nack", "a=rtcp-fb:96 nack pli",
+    // Es una red de casa: arranca alto, y las pérdidas que informa la PC lo bajan si hace falta.
+    "a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f;x-google-start-bitrate=3000;x-google-min-bitrate=800;x-google-max-bitrate=6000",
     "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
     ...common,
     "a=mid:1", "a=sctp-port:5000", "a=max-message-size:65536",
@@ -174,14 +174,15 @@ function connect() {
     const video = pc.getTransceivers().find((t) => t.receiver.track.kind === "video");
     video.direction = "sendonly";
     await video.sender.replaceTrack(track);
+    await pc.setLocalDescription(await pc.createAnswer());
+    // Safari ignora este tope si se pone antes de la respuesta.
     try {
       const sending = video.sender.getParameters();
       if (sending.encodings && sending.encodings[0]) {
-        sending.encodings[0].maxBitrate = 5000000;
+        sending.encodings[0].maxBitrate = 6000000;
         await video.sender.setParameters(sending);
       }
-    } catch (e) { /* sigue con el tope de fábrica */ }
-    await pc.setLocalDescription(await pc.createAnswer());
+    } catch (e) { report({ failed: "maxBitrate", error: String(e) }); }
   });
 }
 
