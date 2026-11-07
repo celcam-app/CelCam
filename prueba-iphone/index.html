@@ -5,66 +5,102 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
-<title>CelCam (prueba)</title>
+<meta name="theme-color" content="#111318">
+<title>CelCam</title>
 <style>
-  :root { --bg:#111318; --panel:#1B1E25; --text:#F2F4F7; --muted:#9AA3AF; --accent:#2DD4BF; --warn:#FBBF24; }
+  :root { --bg:#111318; --panel:#1A1D24; --text:#ECEFF4; --muted:#969EAB; --accent:#2DD4BF; --warn:#FBBF24; }
   * { box-sizing:border-box; }
   html,body { height:100%; margin:0; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; }
   main { min-height:100%; display:flex; flex-direction:column; gap:12px; padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom)); }
   h1 { font-size:22px; margin:0; }
-  small { color:var(--muted); }
   video { width:100%; flex:1; min-height:0; max-height:60vh; object-fit:contain; background:#000; border-radius:12px; }
   #state { background:var(--panel); padding:12px; border-radius:10px; }
   #state.bad { color:var(--warn); }
   #detail { color:var(--muted); font-size:13px; min-height:18px; }
   button { font:inherit; font-weight:600; padding:14px; border:0; border-radius:10px; background:var(--accent); color:#06241F; }
   button.second { background:var(--panel); color:var(--text); }
+  #dark { position:fixed; inset:0; background:#000; color:#3a3f4a; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; font-size:14px; }
   [hidden] { display:none !important; }
 </style>
 </head>
 <body>
 <main>
-  <h1>CelCam <small>(prueba para iPhone)</small></h1>
+  <h1>CelCam</h1>
   <div id="state">Toca «Empezar» y permite el uso de la cámara.</div>
   <video id="video" autoplay playsinline muted></video>
   <button id="start">Empezar</button>
   <button id="flip" class="second" hidden>Cambiar cámara</button>
+  <button id="darken" class="second" hidden>Oscurecer</button>
   <div id="detail"></div>
 </main>
+<div id="dark" hidden>Sigue transmitiendo. Toca la pantalla para encenderla.</div>
 <script>
 "use strict";
+// Lo que viene en el QR va después del «#»: el navegador no se lo manda a nadie.
 const params = new URLSearchParams(location.hash.slice(1));
 const $ = (id) => document.getElementById(id);
 const say = (text, bad) => { $("state").textContent = text; $("state").className = bad ? "bad" : ""; };
 
-let pc = null, channel = null, track = null, stream = null, wake = null;
-let facing = "environment";
-let lastBytes = 0, lastTime = 0, statsTimer = 0, watchdog = 0, wanted = false;
-const events = [];
+let pc = null, channel = null, sender = null, track = null, stream = null, wake = null;
+let facing = "environment", wanted = false, dimmed = false, cameras = 1;
+let format = { w: 1280, h: 720, fps: 30, kbps: 5000 };
+let lastBytes = 0, lastTime = 0, watchdog = 0;
 
-function linked() { return ["h", "p", "u", "w", "f", "t"].every((k) => params.get(k)); }
+const linked = () => ["h", "p", "t", "f"].every((k) => params.get(k));
 
-function offer() {
-  const finger = params.get("f").match(/../g).join(":").toUpperCase();
+function phoneId() {
+  try {
+    let id = localStorage.getItem("celcam-id");
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem("celcam-id", id); }
+    return id;
+  } catch (e) {
+    phoneId.fallback = phoneId.fallback || crypto.randomUUID();
+    return phoneId.fallback;
+  }
+}
+
+function deviceName() {
+  const agent = navigator.userAgent;
+  if (/iPad/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1)) return "iPad";
+  if (/iPhone/.test(agent)) return "iPhone";
+  return "Navegador";
+}
+
+// La misma cuenta que ice_credentials en la PC.
+async function iceCredentials() {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(params.get("t")));
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return { ufrag: hex.slice(0, 8), password: hex.slice(8, 40) };
+}
+
+function fingerprint() {
+  const raw = atob(params.get("f").replace(/-/g, "+").replace(/_/g, "/"));
+  return [...raw].map((c) => c.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()).join(":");
+}
+
+async function offer() {
+  const ice = await iceCredentials();
   const common = [
     "c=IN IP4 0.0.0.0",
-    `a=ice-ufrag:${params.get("u")}`,
-    `a=ice-pwd:${params.get("w")}`,
-    `a=fingerprint:sha-256 ${finger}`,
+    `a=ice-ufrag:${ice.ufrag}`,
+    `a=ice-pwd:${ice.password}`,
+    `a=fingerprint:sha-256 ${fingerprint()}`,
     "a=setup:passive",
   ];
+  const candidates = params.get("h").split(",").map((host, i) =>
+    `a=candidate:${i + 1} 1 udp ${2130706431 - i} ${host} ${params.get("p")} typ host`);
   return [
     "v=0", "o=- 1 2 IN IP4 0.0.0.0", "s=-", "t=0 0",
     "a=group:BUNDLE 0 1", "a=ice-lite", "a=msid-semantic: WMS",
     "m=video 9 UDP/TLS/RTP/SAVPF 96",
     ...common,
-    `a=candidate:1 1 udp 2130706431 ${params.get("h")} ${params.get("p")} typ host`,
+    ...candidates,
     "a=end-of-candidates",
     "a=mid:0", "a=recvonly", "a=rtcp-mux", "a=rtcp-rsize",
     "a=rtpmap:96 H264/90000",
     "a=rtcp-fb:96 nack", "a=rtcp-fb:96 nack pli",
     // Es una red de casa: arranca alto, y las pérdidas que informa la PC lo bajan si hace falta.
-    "a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f;x-google-start-bitrate=3000;x-google-min-bitrate=800;x-google-max-bitrate=6000",
+    "a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f;x-google-start-bitrate=3000;x-google-min-bitrate=500;x-google-max-bitrate=20000",
     "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
     ...common,
     "a=mid:1", "a=sctp-port:5000", "a=max-message-size:65536",
@@ -73,7 +109,7 @@ function offer() {
 }
 
 function testPattern() {
-  // Solo para probar en la PC sin cámara (enlace con lienzo=1).
+  // Solo para las pruebas automáticas en una PC sin cámara (enlace con lienzo=1).
   const canvas = document.createElement("canvas");
   canvas.width = 1280; canvas.height = 720;
   const paint = canvas.getContext("2d");
@@ -87,106 +123,163 @@ function testPattern() {
 }
 
 async function camera() {
-  const media = params.get("lienzo") ? testPattern() : await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-  });
   if (stream) stream.getTracks().forEach((t) => t.stop());
-  stream = media;
-  track = media.getVideoTracks()[0];
-  const started = performance.now();
-  track.addEventListener("ended", () => { events.push(`pista terminada a los ${Math.round(performance.now() - started)} ms`); report({ events }); });
-  track.addEventListener("mute", () => { events.push("pista silenciada"); report({ events }); });
-  events.push(`pista nueva: ${track.readyState}`);
-  $("video").srcObject = media;
+  stream = params.get("lienzo") ? testPattern() : await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: facing }, width: { ideal: format.w }, height: { ideal: format.h }, frameRate: { ideal: format.fps } },
+  });
+  track = stream.getVideoTracks()[0];
+  $("video").srcObject = stream;
   try { await $("video").play(); } catch (e) { /* lo reproduce el atributo autoplay */ }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    cameras = devices.filter((d) => d.kind === "videoinput").length;
+  } catch (e) { cameras = 1; }
   return track;
 }
 
-function report(message) {
+function send(message) {
   if (channel && channel.readyState === "open") channel.send(JSON.stringify(message));
 }
 
-function capabilities() {
-  const caps = track && track.getCapabilities ? track.getCapabilities() : null;
-  return {
-    caps: caps ? { torch: caps.torch, zoom: caps.zoom, frameRate: caps.frameRate, width: caps.width, height: caps.height } : null,
-    settings: track ? track.getSettings() : null,
-    supported: navigator.mediaDevices.getSupportedConstraints(),
-    wakeLock: "wakeLock" in navigator,
-    battery: "getBattery" in navigator,
-  };
+function report() {
+  if (!track) return;
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  const now = track.getSettings ? track.getSettings() : {};
+  const zoom = caps.zoom || { min: 1, max: 1 };
+  send({
+    cmd: "capture",
+    w: now.width || 0, h: now.height || 0, fps: Math.round(now.frameRate || 0), rates: "navegador",
+    zoom_min: zoom.min, zoom_max: zoom.max, zoom: now.zoom || 1,
+    torch_available: Boolean(caps.torch), torch: Boolean(now.torch),
+    can_switch: cameras > 1, dim: dimmed,
+  });
+}
+
+async function applyBitrate() {
+  if (!sender) return;
+  try {
+    const parameters = sender.getParameters();
+    if (parameters.encodings && parameters.encodings[0]) {
+      parameters.encodings[0].maxBitrate = format.kbps * 1000;
+      await sender.setParameters(parameters);
+    }
+  } catch (e) { /* sigue con el tope de fábrica */ }
+}
+
+async function applyFormat(next) {
+  const changed = next.w !== format.w || next.h !== format.h || next.fps !== format.fps;
+  format = next;
+  await applyBitrate();
+  if (changed && track && !params.get("lienzo")) {
+    try {
+      await track.applyConstraints({ width: { ideal: format.w }, height: { ideal: format.h }, frameRate: { ideal: format.fps } });
+    } catch (e) { /* sigue con lo que tenía */ }
+  }
+  report();
+}
+
+function setDim(on) {
+  dimmed = on;
+  $("dark").hidden = !on;
+  report();
+}
+
+function stopAll(message, bad) {
+  wanted = false;
+  clearTimeout(watchdog);
+  setDim(false);
+  if (pc) { pc.close(); pc = null; }
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; track = null; }
+  if (wake) { wake.release().catch(() => {}); wake = null; }
+  $("video").srcObject = null;
+  $("flip").hidden = true;
+  $("darken").hidden = true;
+  $("start").hidden = false;
+  $("detail").textContent = "";
+  say(message, bad);
+}
+
+async function swapCamera() {
+  const next = await camera();
+  if (sender) await sender.replaceTrack(next);
+  report();
 }
 
 async function onCommand(command) {
   try {
     if (command.cmd === "camera") {
       facing = facing === "environment" ? "user" : "environment";
-      await swapTrack();
+      await swapCamera();
     } else if (command.cmd === "torch") {
-      await track.applyConstraints({ advanced: [{ torch: command.on }] });
+      await track.applyConstraints({ advanced: [{ torch: Boolean(command.on) }] });
+      report();
     } else if (command.cmd === "zoom") {
-      await track.applyConstraints({ advanced: [{ zoom: command.value }] });
+      await track.applyConstraints({ advanced: [{ zoom: Number(command.value) }] });
+      report();
+    } else if (command.cmd === "dim") {
+      setDim(Boolean(command.on));
+    } else if (command.cmd === "config") {
+      await applyFormat({ w: command.w, h: command.h, fps: command.fps, kbps: command.kbps });
+    } else if (command.cmd === "stop") {
+      stopAll("Se detuvo desde la PC. Toca «Empezar» para volver a transmitir.");
+    } else if (command.cmd === "bye") {
+      stopAll("Otro celular tomó este lugar en la PC. Toca «Empezar» para volver a transmitir.", true);
     }
-    report({ done: command.cmd, settings: track.getSettings() });
   } catch (error) {
-    report({ failed: command.cmd, error: String(error) });
+    report();
   }
 }
 
-async function swapTrack() {
-  const next = await camera();
-  const sender = pc && pc.getSenders().find((s) => s.track || s.dtmf === null);
-  if (sender) await sender.replaceTrack(next);
-  report(capabilities());
+function onReply(reply) {
+  if (reply.ok === false) {
+    if (reply.error === "lleno") stopAll("Las cuatro cámaras de CelCam están ocupadas. Desconecta un celular y vuelve a tocar «Empezar».", true);
+    else stopAll("La PC no aceptó este código. Vuelve a escanear el QR que muestra CelCam.", true);
+    return;
+  }
+  if (reply.ok) {
+    clearTimeout(watchdog);
+    const where = reply.camera > 1 ? `CelCam ${reply.camera}` : "CelCam";
+    say(`Conectado: elige «${where}» en tu app de video. Deja esta página abierta y la pantalla prendida.`);
+    applyFormat({ w: reply.w, h: reply.h, fps: reply.fps, kbps: reply.kbps });
+    return;
+  }
+  if (reply.cmd) onCommand(reply);
 }
 
-function connect() {
+async function connect() {
   clearTimeout(watchdog);
   if (pc) pc.close();
-  pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
-  channel = pc.createDataChannel("c", { negotiated: true, id: 0 });
+  const current = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
+  pc = current;
+  channel = current.createDataChannel("c", { negotiated: true, id: 0 });
   channel.onopen = () => {
-    channel.send(JSON.stringify({ token: params.get("t"), ua: navigator.userAgent }));
-    report(capabilities());
-    report({ events });
-    report({ answer: pc.localDescription.sdp.replace(/a=(ice-pwd|ice-ufrag|fingerprint).*\r\n/g, "") });
-    const sender = pc.getSenders().find((s) => s.track);
-    report({ sender: sender ? { track: sender.track.readyState, muted: sender.track.muted, enabled: sender.track.enabled, encodings: sender.getParameters().encodings } : null });
+    send({ token: params.get("t"), id: phoneId(), device: deviceName() });
+    report();
   };
   channel.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    if (message.ok) say("Conectado. Deja esta página abierta y la pantalla prendida.");
-    if (message.error) say("La PC no aceptó este código. Vuelve a escanear el QR.", true);
-    if (message.cmd) onCommand(message);
+    try { onReply(JSON.parse(event.data)); } catch (e) { /* mensaje dañado */ }
   };
-  pc.onconnectionstatechange = () => {
-    $("detail").textContent = `Conexión: ${pc.connectionState}`;
-    if (pc.connectionState === "connected") clearTimeout(watchdog);
-    if ((pc.connectionState === "failed" || pc.connectionState === "disconnected") && wanted) {
+  current.onconnectionstatechange = () => {
+    if (current !== pc || !wanted) return;
+    if (current.connectionState === "failed" || current.connectionState === "disconnected") {
       say("Se cortó. Volviendo a conectar…", true);
       clearTimeout(watchdog);
       watchdog = setTimeout(connect, 1500);
     }
   };
-  watchdog = setTimeout(() => say("No se pudo llegar a la PC. Revisa que el iPhone y la PC estén en el mismo Wi-Fi.", true), 15000);
-  return pc.setRemoteDescription({ type: "offer", sdp: offer() }).then(async () => {
-    const video = pc.getTransceivers().find((t) => t.receiver.track.kind === "video");
-    video.direction = "sendonly";
-    await video.sender.replaceTrack(track);
-    await pc.setLocalDescription(await pc.createAnswer());
-    // Safari ignora este tope si se pone antes de la respuesta.
-    try {
-      const sending = video.sender.getParameters();
-      if (sending.encodings && sending.encodings[0]) {
-        sending.encodings[0].maxBitrate = 6000000;
-        await video.sender.setParameters(sending);
-      }
-    } catch (e) { report({ failed: "maxBitrate", error: String(e) }); }
-  });
+  watchdog = setTimeout(() => say("No se pudo llegar a la PC. Revisa que este celular y la PC estén en el mismo WiFi.", true), 15000);
+  await current.setRemoteDescription({ type: "offer", sdp: await offer() });
+  const video = current.getTransceivers().find((t) => t.receiver.track.kind === "video");
+  video.direction = "sendonly";
+  sender = video.sender;
+  await sender.replaceTrack(track);
+  await current.setLocalDescription(await current.createAnswer());
+  // Safari ignora este tope si se pone antes de la respuesta.
+  await applyBitrate();
 }
 
-async function stats() {
+async function showStats() {
   if (!pc) return;
   const list = await pc.getStats();
   list.forEach((row) => {
@@ -194,28 +287,34 @@ async function stats() {
     const now = performance.now();
     const kbps = lastTime ? Math.round(((row.bytesSent - lastBytes) * 8) / (now - lastTime)) : 0;
     lastBytes = row.bytesSent; lastTime = now;
-    const text = `${row.frameWidth || "?"}×${row.frameHeight || "?"} · ${Math.round(row.framesPerSecond || 0)} cuadros/s · ${kbps} kbps`;
-    $("detail").textContent = text;
-    report({ stats: { w: row.frameWidth, h: row.frameHeight, fps: row.framesPerSecond, kbps, limit: row.qualityLimitationReason, encoder: row.encoderImplementation, active: row.active, sent: row.framesSent, encoded: row.framesEncoded, packets: row.packetsSent, plis: row.pliCount, nacks: row.nackCount } });
+    $("detail").textContent = `${row.frameWidth || "?"}×${row.frameHeight || "?"} · ${Math.round(row.framesPerSecond || 0)} cuadros/s · ${(kbps / 1000).toFixed(1)} Mbps`;
   });
 }
 
 async function keepAwake() {
   try {
     if ("wakeLock" in navigator && document.visibilityState === "visible") wake = await navigator.wakeLock.request("screen");
-  } catch (e) { /* la pantalla se apaga sola: se avisa en el texto */ }
+  } catch (e) { /* la pantalla se apaga sola: lo avisa el texto */ }
 }
 
-document.addEventListener("visibilitychange", async () => {
+async function comeBack() {
   if (document.visibilityState !== "visible" || !wanted) return;
   keepAwake();
   try {
-    if (!track || track.readyState === "ended" || track.muted) await swapTrack();
+    if (!track || track.readyState === "ended" || track.muted) await swapCamera();
     if (!pc || pc.connectionState !== "connected") await connect();
-  } catch (error) { say(`No se pudo volver a usar la cámara: ${error.name}`, true); }
-});
+  } catch (error) {
+    say(`No se pudo volver a usar la cámara: ${error.name}`, true);
+  }
+}
+
+document.addEventListener("visibilitychange", comeBack);
+window.addEventListener("pageshow", comeBack);
+window.addEventListener("pagehide", (event) => { if (!event.persisted) send({ cmd: "bye" }); });
 
 $("flip").addEventListener("click", () => onCommand({ cmd: "camera" }));
+$("darken").addEventListener("click", () => setDim(true));
+$("dark").addEventListener("click", () => setDim(false));
 
 $("start").addEventListener("click", async () => {
   try {
@@ -223,16 +322,22 @@ $("start").addEventListener("click", async () => {
     await camera();
     wanted = true;
     $("start").hidden = true;
-    $("flip").hidden = false;
+    $("flip").hidden = cameras < 2;
+    $("darken").hidden = false;
     say("Conectando con la PC…");
     keepAwake();
     await connect();
-    statsTimer = setInterval(stats, 2000);
   } catch (error) {
+    wanted = false;
+    $("start").hidden = false;
     const denied = error.name === "NotAllowedError";
-    say(denied ? "Sin permiso para la cámara. Permítelo en Safari (botón «aA» → Ajustes del sitio web) y vuelve a tocar «Empezar»." : `No se pudo empezar: ${error.name}: ${error.message}`, true);
+    say(denied
+      ? "Sin permiso para la cámara. Permítelo en Safari (botón «aA» > Ajustes del sitio web) y vuelve a tocar «Empezar»."
+      : `No se pudo empezar: ${error.name}`, true);
   }
 });
+
+setInterval(showStats, 2000);
 
 if (!linked()) {
   say("Abre esta página escaneando el QR que muestra CelCam en tu PC.", true);
