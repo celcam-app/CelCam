@@ -89,13 +89,22 @@ class Pipeline:
     def feed(self, data: bytes, quarter_turns: int) -> None:
         self._bytes += len(data)
         for frame in self._decoder.decode(data):
-            self._source = (frame.width, frame.height)
-            image = self.render(frame, quarter_turns)
-            self._output.send(image)
-            with self._latest_lock:
-                self._latest = image
-            self._frames += 1
+            self._show_frame(frame, quarter_turns)
         self._update_stats()
+
+    def show(self, frame: av.VideoFrame, size: int) -> None:
+        """Un cuadro que ya viene decodificado (iPhone). `size` es lo que ocupó en la red."""
+        self._bytes += size
+        self._show_frame(frame, 0)
+        self._update_stats()
+
+    def _show_frame(self, frame: av.VideoFrame, quarter_turns: int) -> None:
+        self._source = (frame.width, frame.height)
+        image = self.render(frame, quarter_turns)
+        self._output.send(image)
+        with self._latest_lock:
+            self._latest = image
+        self._frames += 1
 
     def render(self, frame: av.VideoFrame, quarter_turns: int) -> np.ndarray:
         view = self._view

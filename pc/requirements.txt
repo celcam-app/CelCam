@@ -7,3 +7,14 @@ psutil==7.2.2
 pillow==13.0.0
 pystray==0.19.5
 six==1.17.0
+aiortc==1.16.0
+aioice==0.13.0
+pylibsrtp==1.0.0
+pyOpenSSL==26.4.0
+google-crc32c==1.9.0
+pyee==16.0.1
+dnspython==2.9.2
+ifaddr==0.2.0
+cffi==2.1.1
+pycparser==3.12
+typing_extensions==4.16.0

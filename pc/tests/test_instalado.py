@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+import sys
 import threading
 import time
 import winreg
@@ -20,9 +21,11 @@ import pytest
 
 from celcam import __version__, paths
 from celcam.identity import Identity
+from celcam.netinfo import local_hosts
 from celcam.protocol import DEFAULT_PORT
 from celcam.settings import CameraSettings, Settings
 from celcam.vcam import CAMERA_CLSIDS, CAMERA_NAMES, is_registered
+from celcam.webphone import web_link
 from conftest import FakePhone, encode_h264, wait_for
 
 INSTALLED = os.environ.get("CELCAM_INSTALADO")
@@ -176,6 +179,30 @@ def test_del_celular_a_la_app_que_abre_la_camara(phone_stream):
     assert _looks_like(image, 0.1, 0.1, WHITE)
     assert _looks_like(image, 0.75, 0.75, GREEN)
     assert "Primera imagen" in _log()
+
+
+def test_el_iphone_llega_a_su_propia_camara(phone_stream, tmp_path):
+    """La página real en Edge, contra el programa instalado: comprueba que aiortc quedó bien empaquetado."""
+    assert f"Esperando al iPhone en el puerto UDP" in _log()
+    page = Path(__file__).resolve().parents[2] / "web" / "iphone"
+    web = subprocess.Popen([sys.executable, "-m", "http.server", "8799", "--bind", "127.0.0.1", "--directory", str(page)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    edge = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+    identity = Identity.load_or_create(paths.data_dir())
+    link = web_link(identity, local_hosts(), DEFAULT_PORT, "http://localhost:8799/")
+    browser = subprocess.Popen([str(edge), "--headless=new", "--no-first-run", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", f"--user-data-dir={tmp_path}", f"{link}&auto=1&lienzo=1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        assert wait_for(lambda: "Conectado: Navegador" in _log(), timeout=40), "El navegador no se conectó"
+        assert "va a CelCam 2" in _log()
+
+        def animated() -> bool:
+            first = _capture(0.3, "CelCam 2")
+            second = _capture(0.5, "CelCam 2")
+            return first.shape == (720, 1280, 3) and (first != second).any() and not _looks_like(second, 0.05, 0.05, (17, 19, 24))
+
+        assert wait_for(animated, timeout=30), "No llegó el video del navegador"
+    finally:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(browser.pid)], capture_output=True)
+        web.kill()
 
 
 def test_la_x_oculta_la_ventana_y_todo_sigue_funcionando(program, phone_stream):

@@ -1,6 +1,6 @@
 # CelCam
 
-Use your Android phone as a webcam on Windows. Free, open source, no ads, no accounts.
+Use your Android phone or iPhone as a webcam on Windows. Free, open source, no ads, no accounts.
 
 [Español más abajo](#español)
 
@@ -8,9 +8,9 @@ Use your Android phone as a webcam on Windows. Free, open source, no ads, no acc
 
 ## What it does
 
-CelCam has two parts: an Android app and a Windows program. The Windows program creates virtual cameras called
-"CelCam", "CelCam 2", "CelCam 3" and "CelCam 4", which video apps can pick like any webcam. The phone sends its video
-directly to the PC over your WiFi or a USB cable. Nothing goes through a server.
+CelCam has a Windows program and, for the phone, an Android app or a web page for iPhone. The Windows program creates
+virtual cameras called "CelCam", "CelCam 2", "CelCam 3" and "CelCam 4", which video apps can pick like any webcam. The
+phone sends its video directly to the PC over your WiFi or a USB cable. Video never goes through a server.
 
 - Up to 1080p and 30, 60 or 120 frames per second, if the phone's camera supports it (the app uses the fastest it can)
 - Connect by scanning a QR code, or with a USB cable
@@ -27,8 +27,12 @@ directly to the PC over your WiFi or a USB cable. Nothing goes through a server.
 
 Tested with OBS Studio, Discord and Microsoft Edge. Other apps that use DirectShow cameras should see it too.
 
-**Limits:** video only (use your PC or headset microphone). Windows 10 or 11, 64-bit. Android 7 or newer. No iPhone
-version. The Windows Camera app may not show the camera, because it does not list this type of virtual camera.
+**iPhone:** no app and no paid Apple account. In CelCam choose "iPhone", scan the code with the iPhone camera, and
+Safari opens a page that sends the camera to your PC. Safari must stay open with the screen on. There is no battery
+level on the PC, because Safari does not share it, and no USB cable. Needs the same WiFi as the PC.
+
+**Limits:** video only (use your PC or headset microphone). Windows 10 or 11, 64-bit. Android 7 or newer. The Windows
+Camera app may not show the camera, because it does not list this type of virtual camera.
 
 **Status:** early version, still being tested on real phones and PCs. Each build runs the real installer on a clean
 Windows machine and checks the camera with a simulated phone.
@@ -76,6 +80,10 @@ In practice: video goes only from your phone to the PC you paired it with. There
 connect by USB cable, CelCam asks first and then downloads Android's `adb` tool from Google, under
 [Google's terms](https://developer.android.com/studio/terms).
 
+On iPhone, the page itself comes from GitHub Pages, so GitHub sees that request like any web visit. What the page needs
+to reach your PC comes in the code after the "#", which browsers do not send to the site, and the video goes straight
+from the iPhone to your PC, encrypted.
+
 Only while an avatar is on, CelCam reads which keys are pressed, where the mouse is and how loud your microphone is, to
 animate the character. It does not save any of this or send it anywhere, and no audio is recorded. The pressed keys can
 be seen in the camera image, so turn off "Mostrar mis teclas" before typing a password. You can also turn off the
@@ -94,8 +102,8 @@ based on [Softcam](https://github.com/tshino/softcam) (MIT); the changes are des
 
 ## Español
 
-CelCam convierte tu celular Android en una webcam para Windows. Es gratis y de código abierto, sin anuncios y sin
-cuentas. El video va directo del celular a tu PC, por WiFi o por cable USB, sin pasar por ningún servidor.
+CelCam convierte tu celular Android o tu iPhone en una webcam para Windows. Es gratis y de código abierto, sin anuncios
+y sin cuentas. El video va directo del celular a tu PC, por WiFi o por cable USB, sin pasar por ningún servidor.
 
 **Cómo instalarla**
 
@@ -103,6 +111,10 @@ cuentas. El video va directo del celular a tu PC, por WiFi o por cable USB, sin 
 2. Abre CelCam y toca «¿No tienes la app? Instálala» para pasarla a tu celular.
 3. En el celular, abre la app, toca «Escanear código» y apunta al código de la PC.
 4. En tu app de video, elige la cámara «CelCam».
+
+**Con iPhone:** no se instala nada ni se paga a Apple. En CelCam elige «iPhone», escanea el código con la cámara del
+iPhone y toca «Empezar» en Safari. Safari tiene que quedar abierto con la pantalla prendida, y el iPhone en el mismo WiFi
+que la PC. No se ve la batería en la PC, porque Safari no da ese dato, y no hay opción de cable.
 
 **Con qué funciona:** se probó con OBS Studio, Discord y Microsoft Edge. Las demás apps que usan cámaras DirectShow
 también deberían verla. La app Cámara de Windows y las de la Tienda todavía no la ven.
@@ -121,7 +133,7 @@ volumen del micrófono. No guarda ni envía nada, y no graba audio. Las teclas s
 ícono y elige «Salir».
 
 **Límites:** solo video (usa el micrófono de la PC o de tus auriculares). Windows 10 u 11 de 64 bits y Android 7 o
-posterior. No hay versión para iPhone. Es una versión nueva y todavía se está probando.
+posterior. Es una versión nueva y todavía se está probando.
 
 **Aviso:** las versiones actuales no tienen firma digital, así que Windows muestra una advertencia, y las PC con
 Windows 11 que tienen activado Control inteligente de aplicaciones las bloquean.

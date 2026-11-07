@@ -119,6 +119,7 @@ class Listener:
 
     def on_connected(self, session: Session) -> None: ...
     def on_video(self, session: Session, frame: VideoFrame) -> None: ...
+    def on_decoded(self, session, frame, size: int) -> None: ...
     def on_capture(self, session: Session, report: dict) -> None: ...
     def on_battery(self, session: Session, report: dict) -> None: ...
     def on_disconnected(self, session: Session) -> None: ...
@@ -180,6 +181,19 @@ class StreamServer:
     def current(self, slot: int = 0) -> Session | None:
         with self._lock:
             return self._sessions.get(slot)
+
+    def attach(self, session) -> None:
+        """Esta sesión pasa a ser la de su cámara; la que estaba, se retira. También la usan los iPhone."""
+        with self._lock:
+            previous = self._sessions.get(session.slot)
+            self._sessions[session.slot] = session
+        if previous:
+            previous.retire()
+
+    def detach(self, session) -> None:
+        with self._lock:
+            if self._sessions.get(session.slot) is session:
+                del self._sessions[session.slot]
 
     def _accept_loop(self) -> None:
         assert self._sock
@@ -253,11 +267,7 @@ class StreamServer:
         return Session(tls, reader, device, slot)
 
     def _run(self, session: Session, peer: tuple) -> None:
-        with self._lock:
-            previous = self._sessions.get(session.slot)
-            self._sessions[session.slot] = session
-        if previous:
-            previous.retire()
+        self.attach(session)
         log.info("Conectado: %s desde %s", session.device, peer[0])
         self._listener.on_connected(session)
         try:
@@ -280,8 +290,6 @@ class StreamServer:
             log.info("Sesión terminada (%s): %r", session.device, exc)
             session.closed_by_phone = isinstance(exc, ConnectionClosed)
         finally:
-            with self._lock:
-                if self._sessions.get(session.slot) is session:
-                    del self._sessions[session.slot]
+            self.detach(session)
             session.close()
             self._listener.on_disconnected(session)

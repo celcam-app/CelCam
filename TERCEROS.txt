@@ -21,6 +21,18 @@ Incluidos en el programa de PC
   pystray - LGPL-3.0-or-later
     https://github.com/moses-palmer/pystray
   six - MIT
+  aiortc (conexión con el iPhone, incluye libvpx y Opus) - BSD-3-Clause
+    https://github.com/aiortc/aiortc
+  aioice - BSD-3-Clause
+  pylibsrtp (incluye libsrtp) - BSD-3-Clause
+  pyOpenSSL - Apache-2.0
+  google-crc32c - Apache-2.0
+  pyee - MIT
+  dnspython - ISC
+  ifaddr - MIT
+  cffi - MIT-0
+  pycparser - BSD-3-Clause
+  typing_extensions - PSF-2.0
 
 Incluidos en la app de Android
   AndroidX - Apache-2.0

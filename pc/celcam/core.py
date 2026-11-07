@@ -400,6 +400,21 @@ class CameraChannel:
             pipeline.reset_decoder()
             session.send_control({"cmd": "key"})
             return
+        self._note_frame()
+
+    def on_decoded(self, session, frame, size: int) -> None:
+        with self._pipeline_lock:
+            pipeline = self._pipeline
+        if pipeline is None or self.session is not session:
+            return
+        try:
+            pipeline.show(frame, size)
+        except Exception:
+            log.warning("No se pudo mostrar un cuadro", exc_info=True)
+            return
+        self._note_frame()
+
+    def _note_frame(self) -> None:
         self._last_frame = time.monotonic()
         if self._connected_at is not None:
             log.info("Primera imagen a los %d ms de conectar", (self._last_frame - self._connected_at) * 1000)
@@ -437,6 +452,7 @@ class Core(Listener):
         self._sensors: Sensors | None = None
         self.adb = Adb(paths.adb_exe())
         self.server = StreamServer(identity, self, self._stream_config)
+        self.web = None
 
     # Arranque y apagado
 
@@ -448,13 +464,27 @@ class Core(Listener):
 
     def start(self) -> None:
         self.server.start()
+        self._start_web()
         threading.Thread(target=self._placeholder_loop, name="celcam-espera", daemon=True).start()
         for channel in self.channels:
             if channel.settings.avatar_mode != "apagado":
                 channel.apply_avatar()
 
+    def _start_web(self) -> None:
+        """Si esto falla, los celulares con Android tienen que seguir funcionando igual."""
+        try:
+            from . import webphone
+
+            web = webphone.WebServer(self.identity, self, self._stream_config, self.server)
+            web.start()
+            self.web = web
+        except Exception:
+            log.exception("No se pudo preparar la conexión para iPhone")
+
     def stop(self) -> None:
         self._stopping.set()
+        if self.web:
+            self.web.stop()
         self.server.stop()
         self.adb.shutdown()
         for channel in self.channels:
@@ -467,6 +497,11 @@ class Core(Listener):
 
     def link(self) -> str:
         return self.identity.link(local_hosts() or ["127.0.0.1"], self.server.port)
+
+    def web_link(self) -> str | None:
+        """Lo que escanea un iPhone; None si esa parte no pudo arrancar o no hay red."""
+        hosts = local_hosts()
+        return self.web.link(hosts) if self.web and hosts else None
 
     def usb_link(self) -> str:
         return self.identity.link(["127.0.0.1"], self.server.port)
@@ -530,6 +565,9 @@ class Core(Listener):
 
     def on_video(self, session: Session, frame: VideoFrame) -> None:
         self.channels[session.slot].on_video(session, frame)
+
+    def on_decoded(self, session, frame, size: int) -> None:
+        self.channels[session.slot].on_decoded(session, frame, size)
 
     def on_disconnected(self, session: Session) -> None:
         self.channels[session.slot].on_disconnected(session)

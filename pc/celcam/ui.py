@@ -49,6 +49,12 @@ STATUS_MS = 500
 REQUESTS_MS = 200
 BRING_TO_FRONT_MS = 200
 QR_PIXELS = 220
+# El de iPhone lo lee la cámara del teléfono, y un poco más grande se engancha antes.
+QR_PIXELS_IPHONE = 240
+KIND_ANDROID = "Android"
+KIND_IPHONE = "iPhone"
+HELP_ANDROID = "Abre CelCam en el celular y toca «Escanear código». Cada celular va a su propia cámara."
+HELP_IPHONE = "Apunta la cámara del iPhone a este código, toca el enlace y luego «Empezar». No hace falta instalar nada."
 SIDE_WIDTH = 330
 LOW_BATTERY = 15
 # Mientras se arrastra el zoom, manda la mano; después, lo que informe el celular.
@@ -93,6 +99,7 @@ class Window(ctk.CTk):
         self.core = core
         self._apk_server: ApkServer | None = None
         self._last_link = ""
+        self._connect_kind = KIND_ANDROID
         self._show_signal = show_signal
         self._index = 0
         self._panels_for: tuple | None = None
@@ -238,17 +245,32 @@ class Window(ctk.CTk):
         ctk.CTkLabel(
             self._connect_panel, text="Conecta un celular", font=ctk.CTkFont(size=17, weight="bold"), text_color=TEXT
         ).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(
+        self._kind_tabs = ctk.CTkSegmentedButton(
             self._connect_panel,
-            text="Abre CelCam en el celular y toca «Escanear código». Cada celular va a su propia cámara.",
+            values=[KIND_ANDROID, KIND_IPHONE],
+            height=30,
+            fg_color=PANEL_ALT,
+            unselected_color=PANEL_ALT,
+            unselected_hover_color=PANEL_HOVER,
+            selected_color=SELECTED,
+            selected_hover_color=SELECTED_HOVER,
+            text_color=TEXT,
+            command=self._on_connect_kind,
+        )
+        self._kind_tabs.set(KIND_ANDROID)
+        self._kind_tabs.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        self._connect_help = ctk.CTkLabel(
+            self._connect_panel,
+            text=HELP_ANDROID,
             font=ctk.CTkFont(size=13),
             text_color=MUTED,
             wraplength=285,
             justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 6))
+        )
+        self._connect_help.grid(row=2, column=0, sticky="w", pady=(6, 6))
         self._qr_label = ctk.CTkLabel(self._connect_panel, text="")
-        self._qr_label.grid(row=2, column=0, pady=(0, 6))
-        ctk.CTkButton(
+        self._qr_label.grid(row=3, column=0, pady=(0, 6))
+        self._usb_button = ctk.CTkButton(
             self._connect_panel,
             text="Conectar por cable USB",
             height=32,
@@ -256,8 +278,9 @@ class Window(ctk.CTk):
             hover_color=PANEL_HOVER,
             text_color=TEXT,
             command=self._connect_usb,
-        ).grid(row=3, column=0, sticky="ew", pady=(0, 6))
-        ctk.CTkButton(
+        )
+        self._usb_button.grid(row=4, column=0, sticky="ew", pady=(0, 6))
+        self._install_button = ctk.CTkButton(
             self._connect_panel,
             text="¿No tienes la app? Instálala",
             height=32,
@@ -265,7 +288,8 @@ class Window(ctk.CTk):
             hover_color=ACCENT_HOVER,
             text_color=ACCENT_TEXT,
             command=self._show_install,
-        ).grid(row=4, column=0, sticky="ew")
+        )
+        self._install_button.grid(row=5, column=0, sticky="ew")
 
         self._connected_panel = ctk.CTkFrame(parent, fg_color="transparent")
         self._connected_panel.grid_columnconfigure(0, weight=1)
@@ -404,14 +428,28 @@ class Window(ctk.CTk):
 
     # Enlace y QR
 
+    def _on_connect_kind(self, kind: str) -> None:
+        self._connect_kind = kind
+        iphone = kind == KIND_IPHONE
+        self._connect_help.configure(text=HELP_IPHONE if iphone else HELP_ANDROID)
+        for button in (self._usb_button, self._install_button):
+            button.grid_remove() if iphone else button.grid()
+        self._refresh_link()
+
     def _refresh_link(self) -> None:
-        link = self.core.link()
+        iphone = self._connect_kind == KIND_IPHONE
+        link = self.core.web_link() if iphone else self.core.link()
+        if link is None:
+            self._last_link = ""
+            self._qr_image = None
+            self._qr_label.configure(image=None, text="No se pudo preparar la conexión para iPhone en esta PC.", text_color=WARN, wraplength=285)
+            return
         if link != self._last_link:
             self._last_link = link
-            image = qr_image(link, QR_PIXELS)
+            image = qr_image(link, QR_PIXELS_IPHONE if iphone else QR_PIXELS)
             # A su tamaño exacto: escalado se ven borrosos los módulos y cuesta leerlo.
             self._qr_image = ctk.CTkImage(image, size=image.size)
-            self._qr_label.configure(image=self._qr_image)
+            self._qr_label.configure(image=self._qr_image, text="")
 
     # Pestañas
 
@@ -694,6 +732,7 @@ class Window(ctk.CTk):
                 text=(
                     f"Ahora elige la cámara «{name}» en Discord, Zoom, Meet o Teams.\n\n"
                     f"En OBS: Fuentes > + > Dispositivo de captura de video > {name}."
+                    + ("\n\nDeja Safari abierto en el iPhone, con la pantalla prendida." if status.device in ("iPhone", "iPad") else "")
                 )
             )
         else:

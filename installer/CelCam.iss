@@ -2,7 +2,7 @@
 ; Lo arma scripts\construir.ps1 con lo que deja en pc\dist\CelCam y pc\stage.
 
 #define AppName "CelCam"
-#define AppVersion "1.2.0"
+#define AppVersion "1.3.0"
 
 [Setup]
 AppId={{C5E1F0A2-6D47-4B3E-9A18-2F7C4D9E6B10}
@@ -61,6 +61,7 @@ Root: HKCU; Subkey: "Software\CelCam"; Flags: uninsdeletekey dontcreatekey
 ; Sin esto, Windows bloquearía la conexión del celular en redes marcadas como públicas.
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CelCam"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CelCam"" dir=in action=allow program=""{app}\CelCam.exe"" enable=yes profile=any protocol=tcp"; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CelCam"" dir=in action=allow program=""{app}\CelCam.exe"" enable=yes profile=any protocol=udp"; Flags: runhidden
 Filename: "{app}\CelCam.exe"; Description: "Abrir CelCam"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
