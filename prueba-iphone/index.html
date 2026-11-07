@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>CelCam (prueba)</title>
+<style>
+  :root { --bg:#111318; --panel:#1B1E25; --text:#F2F4F7; --muted:#9AA3AF; --accent:#2DD4BF; --warn:#FBBF24; }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; }
+  main { min-height:100%; display:flex; flex-direction:column; gap:12px; padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom)); }
+  h1 { font-size:22px; margin:0; }
+  small { color:var(--muted); }
+  video { width:100%; flex:1; min-height:0; max-height:60vh; object-fit:contain; background:#000; border-radius:12px; }
+  #state { background:var(--panel); padding:12px; border-radius:10px; }
+  #state.bad { color:var(--warn); }
+  #detail { color:var(--muted); font-size:13px; min-height:18px; }
+  button { font:inherit; font-weight:600; padding:14px; border:0; border-radius:10px; background:var(--accent); color:#06241F; }
+  button.second { background:var(--panel); color:var(--text); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>CelCam <small>(prueba para iPhone)</small></h1>
+  <div id="state">Toca «Empezar» y permite el uso de la cámara.</div>
+  <video id="video" autoplay playsinline muted></video>
+  <button id="start">Empezar</button>
+  <button id="flip" class="second" hidden>Cambiar cámara</button>
+  <div id="detail"></div>
+</main>
+<script>
+"use strict";
+const params = new URLSearchParams(location.hash.slice(1));
+const $ = (id) => document.getElementById(id);
+const say = (text, bad) => { $("state").textContent = text; $("state").className = bad ? "bad" : ""; };
+
+let pc = null, channel = null, track = null, stream = null, wake = null;
+let facing = "environment";
+let lastBytes = 0, lastTime = 0, statsTimer = 0, watchdog = 0, wanted = false;
+const events = [];
+
+function linked() { return ["h", "p", "u", "w", "f", "t"].every((k) => params.get(k)); }
+
+function offer() {
+  const finger = params.get("f").match(/../g).join(":").toUpperCase();
+  const common = [
+    "c=IN IP4 0.0.0.0",
+    `a=ice-ufrag:${params.get("u")}`,
+    `a=ice-pwd:${params.get("w")}`,
+    `a=fingerprint:sha-256 ${finger}`,
+    "a=setup:passive",
+  ];
+  return [
+    "v=0", "o=- 1 2 IN IP4 0.0.0.0", "s=-", "t=0 0",
+    "a=group:BUNDLE 0 1", "a=ice-lite", "a=msid-semantic: WMS",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96",
+    ...common,
+    `a=candidate:1 1 udp 2130706431 ${params.get("h")} ${params.get("p")} typ host`,
+    "a=end-of-candidates",
+    "a=mid:0", "a=recvonly", "a=rtcp-mux", "a=rtcp-rsize",
+    "a=rtpmap:96 H264/90000",
+    "a=rtcp-fb:96 nack", "a=rtcp-fb:96 nack pli", "a=rtcp-fb:96 goog-remb",
+    "a=extmap:1 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
+    "a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+    "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+    ...common,
+    "a=mid:1", "a=sctp-port:5000", "a=max-message-size:65536",
+    "",
+  ].join("\r\n");
+}
+
+function testPattern() {
+  // Solo para probar en la PC sin cámara (enlace con lienzo=1).
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280; canvas.height = 720;
+  const paint = canvas.getContext("2d");
+  let n = 0;
+  setInterval(() => {
+    n += 1;
+    paint.fillStyle = `hsl(${n % 360} 70% 40%)`; paint.fillRect(0, 0, 1280, 720);
+    paint.fillStyle = "#fff"; paint.fillRect((n * 8) % 1280, 300, 120, 120);
+  }, 33);
+  return canvas.captureStream(30);
+}
+
+async function camera() {
+  const media = params.get("lienzo") ? testPattern() : await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+  });
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = media;
+  track = media.getVideoTracks()[0];
+  const started = performance.now();
+  track.addEventListener("ended", () => { events.push(`pista terminada a los ${Math.round(performance.now() - started)} ms`); report({ events }); });
+  track.addEventListener("mute", () => { events.push("pista silenciada"); report({ events }); });
+  events.push(`pista nueva: ${track.readyState}`);
+  $("video").srcObject = media;
+  try { await $("video").play(); } catch (e) { /* lo reproduce el atributo autoplay */ }
+  return track;
+}
+
+function report(message) {
+  if (channel && channel.readyState === "open") channel.send(JSON.stringify(message));
+}
+
+function capabilities() {
+  const caps = track && track.getCapabilities ? track.getCapabilities() : null;
+  return {
+    caps: caps ? { torch: caps.torch, zoom: caps.zoom, frameRate: caps.frameRate, width: caps.width, height: caps.height } : null,
+    settings: track ? track.getSettings() : null,
+    supported: navigator.mediaDevices.getSupportedConstraints(),
+    wakeLock: "wakeLock" in navigator,
+    battery: "getBattery" in navigator,
+  };
+}
+
+async function onCommand(command) {
+  try {
+    if (command.cmd === "camera") {
+      facing = facing === "environment" ? "user" : "environment";
+      await swapTrack();
+    } else if (command.cmd === "torch") {
+      await track.applyConstraints({ advanced: [{ torch: command.on }] });
+    } else if (command.cmd === "zoom") {
+      await track.applyConstraints({ advanced: [{ zoom: command.value }] });
+    }
+    report({ done: command.cmd, settings: track.getSettings() });
+  } catch (error) {
+    report({ failed: command.cmd, error: String(error) });
+  }
+}
+
+async function swapTrack() {
+  const next = await camera();
+  const sender = pc && pc.getSenders().find((s) => s.track || s.dtmf === null);
+  if (sender) await sender.replaceTrack(next);
+  report(capabilities());
+}
+
+function connect() {
+  clearTimeout(watchdog);
+  if (pc) pc.close();
+  pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
+  channel = pc.createDataChannel("c", { negotiated: true, id: 0 });
+  channel.onopen = () => {
+    channel.send(JSON.stringify({ token: params.get("t"), ua: navigator.userAgent }));
+    report(capabilities());
+    report({ events });
+    report({ answer: pc.localDescription.sdp.replace(/a=(ice-pwd|ice-ufrag|fingerprint).*\r\n/g, "") });
+    const sender = pc.getSenders().find((s) => s.track);
+    report({ sender: sender ? { track: sender.track.readyState, muted: sender.track.muted, enabled: sender.track.enabled, encodings: sender.getParameters().encodings } : null });
+  };
+  channel.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    if (message.ok) say("Conectado. Deja esta página abierta y la pantalla prendida.");
+    if (message.error) say("La PC no aceptó este código. Vuelve a escanear el QR.", true);
+    if (message.cmd) onCommand(message);
+  };
+  pc.onconnectionstatechange = () => {
+    $("detail").textContent = `Conexión: ${pc.connectionState}`;
+    if (pc.connectionState === "connected") clearTimeout(watchdog);
+    if ((pc.connectionState === "failed" || pc.connectionState === "disconnected") && wanted) {
+      say("Se cortó. Volviendo a conectar…", true);
+      clearTimeout(watchdog);
+      watchdog = setTimeout(connect, 1500);
+    }
+  };
+  watchdog = setTimeout(() => say("No se pudo llegar a la PC. Revisa que el iPhone y la PC estén en el mismo Wi-Fi.", true), 15000);
+  return pc.setRemoteDescription({ type: "offer", sdp: offer() }).then(async () => {
+    const video = pc.getTransceivers().find((t) => t.receiver.track.kind === "video");
+    video.direction = "sendonly";
+    await video.sender.replaceTrack(track);
+    try {
+      const sending = video.sender.getParameters();
+      if (sending.encodings && sending.encodings[0]) {
+        sending.encodings[0].maxBitrate = 5000000;
+        await video.sender.setParameters(sending);
+      }
+    } catch (e) { /* sigue con el tope de fábrica */ }
+    await pc.setLocalDescription(await pc.createAnswer());
+  });
+}
+
+async function stats() {
+  if (!pc) return;
+  const list = await pc.getStats();
+  list.forEach((row) => {
+    if (row.type !== "outbound-rtp" || row.kind !== "video") return;
+    const now = performance.now();
+    const kbps = lastTime ? Math.round(((row.bytesSent - lastBytes) * 8) / (now - lastTime)) : 0;
+    lastBytes = row.bytesSent; lastTime = now;
+    const text = `${row.frameWidth || "?"}×${row.frameHeight || "?"} · ${Math.round(row.framesPerSecond || 0)} cuadros/s · ${kbps} kbps`;
+    $("detail").textContent = text;
+    report({ stats: { w: row.frameWidth, h: row.frameHeight, fps: row.framesPerSecond, kbps, limit: row.qualityLimitationReason, encoder: row.encoderImplementation, active: row.active, sent: row.framesSent, encoded: row.framesEncoded, packets: row.packetsSent, plis: row.pliCount, nacks: row.nackCount } });
+  });
+}
+
+async function keepAwake() {
+  try {
+    if ("wakeLock" in navigator && document.visibilityState === "visible") wake = await navigator.wakeLock.request("screen");
+  } catch (e) { /* la pantalla se apaga sola: se avisa en el texto */ }
+}
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || !wanted) return;
+  keepAwake();
+  try {
+    if (!track || track.readyState === "ended" || track.muted) await swapTrack();
+    if (!pc || pc.connectionState !== "connected") await connect();
+  } catch (error) { say(`No se pudo volver a usar la cámara: ${error.name}`, true); }
+});
+
+$("flip").addEventListener("click", () => onCommand({ cmd: "camera" }));
+
+$("start").addEventListener("click", async () => {
+  try {
+    say("Pidiendo permiso para usar la cámara…");
+    await camera();
+    wanted = true;
+    $("start").hidden = true;
+    $("flip").hidden = false;
+    say("Conectando con la PC…");
+    keepAwake();
+    await connect();
+    statsTimer = setInterval(stats, 2000);
+  } catch (error) {
+    const denied = error.name === "NotAllowedError";
+    say(denied ? "Sin permiso para la cámara. Permítelo en Safari (botón «aA» → Ajustes del sitio web) y vuelve a tocar «Empezar»." : `No se pudo empezar: ${error.name}: ${error.message}`, true);
+  }
+});
+
+if (!linked()) {
+  say("Abre esta página escaneando el QR que muestra CelCam en tu PC.", true);
+  $("start").hidden = true;
+} else if (!navigator.mediaDevices || !window.RTCPeerConnection) {
+  say("Este navegador no permite usar la cámara aquí. Abre el enlace en Safari.", true);
+  $("start").hidden = true;
+} else if (params.get("auto")) {
+  $("start").click();
+}
+</script>
+</body>
+</html>
