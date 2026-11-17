@@ -9,6 +9,8 @@ import logging.handlers
 import sys
 import threading
 
+import psutil
+
 from . import APP_NAME, __version__, paths
 from .core import Core
 from .identity import Identity
@@ -23,7 +25,6 @@ MUTEX_NAME = "CelCamAppMutex"
 ERROR_ALREADY_EXISTS = 183
 # «Una directiva de Control de aplicaciones bloqueó este archivo».
 WINERROR_APP_CONTROL = 4551
-ABOVE_NORMAL_PRIORITY_CLASS = 0x8000
 
 
 def _setup_logging() -> None:
@@ -38,9 +39,10 @@ def _setup_logging() -> None:
 
 def _raise_priority() -> None:
     """Con la PC al tope (por ejemplo, TikTok transmitiendo), CelCam no tiene que esperar turno: si no, la imagen se atrasa."""
-    kernel32 = ctypes.windll.kernel32
-    if not kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS):
-        log.warning("No se pudo subir la prioridad de CelCam")
+    try:
+        psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+    except (psutil.Error, OSError):
+        log.warning("No se pudo subir la prioridad de CelCam", exc_info=True)
 
 
 def _already_running() -> bool:
