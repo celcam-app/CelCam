@@ -351,14 +351,15 @@ class WebServer(asyncio.DatagramProtocol):
 
         async def close_all() -> None:
             await asyncio.gather(*(session.close() for session in list(self._sessions.values())), return_exceptions=True)
+            if self._watching is not None:
+                self._watching.cancel()
+                await asyncio.gather(self._watching, return_exceptions=True)
 
         # Cierra los decodificadores: si no, sus hilos no dejan terminar el programa.
         try:
             asyncio.run_coroutine_threadsafe(close_all(), self.loop).result(STOP_WAIT)
         except Exception:
             log.warning("No se pudieron cerrar a tiempo las sesiones de iPhone", exc_info=True)
-        if self._watching is not None:
-            self.loop.call_soon_threadsafe(self._watching.cancel)
         self.loop.call_soon_threadsafe(self.loop.stop)
         self._thread.join(STOP_WAIT)
         self._thread = None

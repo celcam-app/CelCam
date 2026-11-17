@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -96,6 +97,50 @@ class Battery:
         return cls(level, bool(report.get("charging", False)))
 
 
+class DelayMeter:
+    """Cuánto más tarda la imagen que en su mejor momento: es la demora que se junta en la red o en el celular.
+
+    Los relojes del celular y de la PC no se pueden comparar, pero la diferencia entre los dos es fija:
+    lo que crece por encima de la mínima es atraso. La mínima es la de los últimos 10 minutos,
+    así no la desvía que los dos relojes avancen apenas distinto.
+    """
+
+    BUCKET_SECONDS = 60.0
+    BUCKETS = 10
+    WARN_MS = 150
+    LOG_EVERY = 60.0
+
+    def __init__(self) -> None:
+        self._mins: deque[float] = deque(maxlen=self.BUCKETS)
+        self._bucket_start: float | None = None
+        self._bucket_min = float("inf")
+        self.excess_ms = 0.0
+        self._worst = 0.0
+        self._last_log = 0.0
+
+    def add(self, pts_us: int, now: float, device: str) -> None:
+        if pts_us <= 0:
+            return
+        gap_ms = now * 1000.0 - pts_us / 1000.0
+        if self._bucket_start is None:
+            self._bucket_start = self._last_log = now
+        elif now - self._bucket_start >= self.BUCKET_SECONDS:
+            self._mins.append(self._bucket_min)
+            self._bucket_min = float("inf")
+            self._bucket_start = now
+        self._bucket_min = min(self._bucket_min, gap_ms)
+        base = min(min(self._mins, default=float("inf")), self._bucket_min)
+        excess = max(0.0, gap_ms - base)
+        # Promedio corto: un solo cuadro tarde no es un atraso.
+        self.excess_ms = 0.9 * self.excess_ms + 0.1 * excess
+        self._worst = max(self._worst, self.excess_ms)
+        if now - self._last_log >= self.LOG_EVERY:
+            if self._worst >= self.WARN_MS:
+                log.info("%s: la imagen llegó a atrasarse %d ms en el último minuto", device, self._worst)
+            self._worst = 0.0
+            self._last_log = now
+
+
 @dataclass(frozen=True)
 class Status:
     connected: bool
@@ -110,6 +155,8 @@ class Status:
     # Con un avatar prendido: ya se ve, o todavía se está dibujando.
     avatar_ready: bool = False
     avatar_failed: bool = False
+    # Atraso que se viene juntando, por encima de lo normal (solo con la app de Android).
+    delay_ms: int = 0
 
 
 class CameraChannel:
@@ -129,6 +176,7 @@ class CameraChannel:
         self._controls: PhoneControls | None = None
         self._battery: Battery | None = None
         self._last_report: tuple | None = None
+        self._delay = DelayMeter()
         self._placeholder = np.empty(0)
         self._placeholder_sent = False
         self._render_placeholder(camera.size)
@@ -339,6 +387,7 @@ class CameraChannel:
             self._battery if session else None,
             bool(runner and runner.ready.is_set()),
             bool(runner and runner.failed),
+            round(self._delay.excess_ms) if session else 0,
         )
 
     def latest_image(self) -> np.ndarray | None:
@@ -357,6 +406,7 @@ class CameraChannel:
         self._controls = None
         self._battery = None
         self._last_report = None
+        self._delay = DelayMeter()
         self._connected_at = time.monotonic()
         with self._pipeline_lock:
             self._pipeline = Pipeline(self, self._view())
@@ -400,6 +450,7 @@ class CameraChannel:
             pipeline.reset_decoder()
             session.send_control({"cmd": "key"})
             return
+        self._delay.add(frame.pts_us, time.monotonic(), session.device)
         self._note_frame()
 
     def on_decoded(self, session, frame, size: int) -> None:

@@ -104,7 +104,8 @@ class Connection private constructor(
         private const val HANDSHAKE_TIMEOUT_MS = 8000
         // La PC contesta cada ping (2 s); si pasan 15 s sin nada, la conexión está muerta.
         private const val READ_TIMEOUT_MS = 15000
-        private const val SEND_BUFFER = 128 * 1024
+        // Lo que espera acá también es atraso: alcanza con unos 50 ms a la calidad más alta.
+        private const val SEND_BUFFER = 64 * 1024
 
         fun connect(pairing: Pairing, device: String, appVersion: String, phoneId: String): Connection {
             val remaining = pairing.hosts.toMutableList()

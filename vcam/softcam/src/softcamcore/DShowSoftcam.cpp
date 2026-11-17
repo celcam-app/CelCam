@@ -590,12 +590,18 @@ HRESULT SoftcamStream::FillBuffer(IMediaSample *pms)
         REFERENCE_TIME start = m_sample_time;
         CRefTime now;
         const bool running = getParent()->running() && m_pFilter->StreamTime(now) == S_OK;
-        if (running && now.m_time > start)
+        // Sin reloj de la app, igual la hora real: contar según los cuadros anunciados haría que un celular
+        // que da 30 en una cámara de 60 se vea en cámara lenta y cada vez más atrasado que el audio.
+        const REFERENCE_TIME real = running
+            ? now.m_time
+            : (REFERENCE_TIME)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::steady_clock::now() - m_origin).count() / 100;
+        if (real > start)
         {
-            start = now.m_time;
+            start = real;
         }
         REFERENCE_TIME stop = start + m_frame_time;
-        m_sample_time = running ? start + 1 : stop;
+        m_sample_time = start + 1;
         pms->SetTime(&start, &stop);
     }
     pms->SetSyncPoint(TRUE);
@@ -699,6 +705,7 @@ HRESULT SoftcamStream::OnThreadCreate()
     m_channels = pvi->bmiHeader.biBitCount / 8;
     m_frame_time = pvi->AvgTimePerFrame > 0 ? pvi->AvgTimePerFrame : 333333;
     m_sample_time = 0;
+    m_origin = std::chrono::steady_clock::now();
     // Una imagen guardada de otra conexión puede tener otro tamaño.
     m_screenshot.reset();
 

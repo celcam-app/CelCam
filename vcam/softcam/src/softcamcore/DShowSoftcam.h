@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <baseclasses/streams.h>
@@ -109,6 +110,8 @@ private:
 
     CCritSec m_critsec;
     REFERENCE_TIME m_sample_time = 0;
+    // CelCam: desde cuándo cuenta la hora real cuando la app no tiene reloj.
+    std::chrono::steady_clock::time_point m_origin{};
 
     Softcam*        getParent();
 };

@@ -62,6 +62,7 @@ ZOOM_TOUCH_SECONDS = 1.0
 # Conectado desde hace un rato y sin informar sus controles: es una app vieja.
 OLD_APP_AFTER = 4.0
 CHECKER = 14
+DELAY_WARN_MS = 150
 
 
 def qr_image(text: str, pixels: int) -> Image.Image:
@@ -672,7 +673,8 @@ class Window(ctk.CTk):
     # Actualizaciones periódicas
 
     def _is_hidden(self) -> bool:
-        return self.state() == "withdrawn"
+        # Oculta junto al reloj o minimizada: nadie mira la vista previa.
+        return self.state() in ("withdrawn", "iconic")
 
     def _tick_preview(self) -> None:
         # Oculta, no gasta procesador en una vista previa que nadie ve.
@@ -778,7 +780,9 @@ class Window(ctk.CTk):
         if s.source[0]:
             text = f"{s.source[0]}×{s.source[1]} · {s.fps:.0f} cuadros/s · {s.mbps:.1f} Mbps"
             if 0 < status.phone_fps < settings.fps:
-                text += f"\nCon esta cámara y calidad, tu celular llega a {status.phone_fps} cuadros/s."
+                text += f"\nTu celular llega a {status.phone_fps} cuadros/s con esta calidad: elige {status.phone_fps} en «Cuadros por segundo»."
+        if status.delay_ms >= DELAY_WARN_MS:
+            text = (text + "\n" if text else "") + f"La imagen viene {status.delay_ms} ms atrasada. Baja la calidad, usa el cable o cierra programas pesados."
         if status.controls is None and self._looks_old():
             text = (text + "\n" if text else "") + "Actualiza la app del celular para manejarlo desde aquí."
         self._stats_label.configure(text=text, justify="left")

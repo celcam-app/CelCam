@@ -145,6 +145,7 @@ class StreamService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            Log.i(TAG, "Detenido desde el celular")
             requestStop()
             return START_NOT_STICKY
         }
@@ -335,6 +336,7 @@ class StreamService : Service() {
             "zoom" -> command.optDouble("value").takeUnless { it.isNaN() }?.let { setZoom(it.toFloat()) }
             "dim" -> setDim(command.optBoolean("on"))
             "stop" -> {
+                Log.i(TAG, "Detenido desde la PC")
                 stoppedByPc = true
                 requestStop()
             }
@@ -372,6 +374,7 @@ class StreamService : Service() {
         val waiting = queue.size
         if (waiting >= queueLimit || !queue.offer(frame)) {
             // La red no da abasto: se tira lo acumulado y se sigue desde la próxima imagen completa.
+            Log.i(TAG, "Atraso de $waiting cuadros: se descartan para no desfasar la imagen")
             queue.clear()
             waitingForKey = true
             capture.requestKeyFrame()
@@ -472,6 +475,7 @@ class StreamService : Service() {
     }
 
     override fun onDestroy() {
+        if (worker != null) Log.i(TAG, "Android cerró el servicio mientras transmitía")
         instance = null
         stopping = true
         worker?.interrupt()
@@ -490,9 +494,9 @@ class StreamService : Service() {
         private const val CHANNEL = "transmision"
         private const val NOTIFICATION_ID = 1
         private const val QUEUE_CAPACITY = 64
-        // Unos 530 ms de video, sea cual sea la velocidad: en un Wi-Fi malo hay trabas de hasta 400 ms.
-        private const val QUEUE_FRAMES_PER_15_FPS = 8
-        private const val MIN_QUEUE_FRAMES = 8
+        // Unos 200 ms de video: para una cámara en vivo es mejor saltear cuadros que atrasarse respecto de la voz.
+        private const val QUEUE_FRAMES_PER_15_FPS = 3
+        private const val MIN_QUEUE_FRAMES = 4
         private const val EARLY_LOWER_MS = 1000L
         private const val POLL_MS = 500L
         private const val PING_MS = 2000L

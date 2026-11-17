@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import psutil
 import shutil
 import subprocess
 import tempfile
@@ -128,7 +129,17 @@ class Adb:
                 problem = exc
         if not connected and problem:
             raise problem
+        self._raise_priority()
         return connected
+
+    def _raise_priority(self) -> None:
+        """Por el cable, cada cuadro pasa por adb: con la PC al tope tampoco tiene que esperar turno."""
+        for process in psutil.process_iter(["name", "exe"]):
+            try:
+                if process.info["name"] == "adb.exe" and process.info["exe"] and Path(process.info["exe"]) == self._exe:
+                    process.nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+            except (psutil.Error, OSError):
+                continue
 
     def _connect_one(self, serial: str, port: int, link_for_usb: str, apk: Path) -> None:
         installed = self._run("-s", serial, "shell", "pm", "path", PACKAGE)
