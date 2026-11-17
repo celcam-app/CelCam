@@ -504,6 +504,7 @@ class Core(Listener):
         self.adb = Adb(paths.adb_exe())
         self.server = StreamServer(identity, self, self._stream_config)
         self.web = None
+        self.airplay = None
 
     # Arranque y apagado
 
@@ -532,8 +533,27 @@ class Core(Listener):
         except Exception:
             log.exception("No se pudo preparar la conexión para iPhone")
 
+    def start_airplay(self, name: str | None = None) -> None:
+        """La pantalla del iPhone por AirPlay. Lo prende el programa (no las pruebas): se anuncia en la red.
+
+        Si falla, lo demás sigue igual: por ejemplo, si Windows bloquea la biblioteca de FairPlay.
+        """
+        try:
+            from . import airplay
+
+            server = airplay.AirPlayServer(
+                self, self.server, paths.data_dir() / "airplay_llave.pem", paths.playfair_dll(),
+                name or f"CelCam ({self.identity.pc_name})",
+            )
+            server.start(local_hosts() or ["127.0.0.1"])
+            self.airplay = server
+        except Exception:
+            log.exception("No se pudo preparar la pantalla del iPhone por AirPlay")
+
     def stop(self) -> None:
         self._stopping.set()
+        if self.airplay:
+            self.airplay.stop()
         if self.web:
             self.web.stop()
         self.server.stop()

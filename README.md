@@ -31,6 +31,11 @@ Tested with OBS Studio, Discord and Microsoft Edge. Other apps that use DirectSh
 Safari opens a page that sends the camera to your PC. Safari must stay open with the screen on. There is no battery
 level on the PC, because Safari does not share it, and no USB cable. Needs the same WiFi as the PC.
 
+**iPhone screen (AirPlay):** CelCam also works as an AirPlay receiver, like a smart TV. On the iPhone, open Control
+Center, tap "Screen Mirroring" and choose CelCam. The screen shows on the PC (with a full-screen view), goes to its own
+CelCam camera for your video apps, and the iPhone's sound plays on the PC speakers. Up to 2560×1184 at 60 frames per
+second on an iPhone 13 Pro. Based on how [UxPlay](https://github.com/FDH2/UxPlay) works, including its FairPlay part.
+
 **Limits:** video only (use your PC or headset microphone). Windows 10 or 11, 64-bit. Android 7 or newer. The Windows
 Camera app may not show the camera, because it does not list this type of virtual camera.
 
@@ -84,6 +89,9 @@ On iPhone, the page itself comes from GitHub Pages, so GitHub sees that request 
 to reach your PC comes in the code after the "#", which browsers do not send to the site, and the video goes straight
 from the iPhone to your PC, encrypted.
 
+For AirPlay, CelCam announces itself on your local network (mDNS) so iPhones can find it. Screen and sound go
+straight from the iPhone to your PC, encrypted; nothing is recorded.
+
 Only while an avatar is on, CelCam reads which keys are pressed, where the mouse is and how loud your microphone is, to
 animate the character. It does not save any of this or send it anywhere, and no audio is recorded. The pressed keys can
 be seen in the camera image, so turn off "Mostrar mis teclas" before typing a password. You can also turn off the
@@ -115,6 +123,10 @@ y sin cuentas. El video va directo del celular a tu PC, por WiFi o por cable USB
 **Con iPhone:** no se instala nada ni se paga a Apple. En CelCam elige «iPhone», escanea el código con la cámara del
 iPhone y toca «Empezar» en Safari. Safari tiene que quedar abierto con la pantalla prendida, y el iPhone en el mismo WiFi
 que la PC. No se ve la batería en la PC, porque Safari no da ese dato, y no hay opción de cable.
+
+**Pantalla del iPhone:** en el iPhone abre el Centro de control, toca «Duplicar pantalla» y elige CelCam. La pantalla se
+ve en la PC (también en pantalla completa), llega a su propia cámara de CelCam y el sonido del iPhone sale por los
+parlantes de la PC. Con un iPhone 13 Pro llega a 2560×1184 y 60 cuadros por segundo.
 
 **Con qué funciona:** se probó con OBS Studio, Discord y Microsoft Edge. Las demás apps que usan cámaras DirectShow
 también deberían verla. La app Cámara de Windows y las de la Tienda todavía no la ven.

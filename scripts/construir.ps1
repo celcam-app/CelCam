@@ -29,6 +29,15 @@ if ($Pasos -contains 'camara') {
     New-Item -ItemType Directory -Force "$stage\vcam\x64", "$stage\vcam\x86" | Out-Null
     Copy-Item "$softcam\dist\bin\x64\softcam.dll" "$stage\vcam\x64\celcam_vcam.dll" -Force
     Copy-Item "$softcam\dist\bin\Win32\softcam.dll" "$stage\vcam\x86\celcam_vcam.dll" -Force
+
+    Write-Host "== FairPlay para AirPlay (playfair de UxPlay)"
+    $vs = & $vswhere -latest -products * -property installationPath
+    $playfair = "$raiz\vcam\playfair"
+    $salida = "$stage\airplay"
+    New-Item -ItemType Directory -Force $salida | Out-Null
+    $fuentes = 'celcam_playfair.c playfair.c omg_hax.c hand_garble.c modified_md5.c sap_hash.c'
+    cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cd /d `"$playfair`" && cl /nologo /O2 /LD /W0 $fuentes /Fo`"$env:TEMP\\`" /Fe`"$salida\celcam_playfair.dll`" /link /NOEXP /NOIMPLIB"
+    Revisar "compilar playfair"
 }
 
 if ($Pasos -contains 'app') {
@@ -52,7 +61,7 @@ if ($Pasos -contains 'programa') {
     Push-Location "$raiz\pc"
     try {
         & $python -m PyInstaller --noconfirm --clean --windowed --name CelCam --icon "$stage\celcam.ico" `
-            --version-file version_info.txt --collect-all customtkinter --collect-submodules av --collect-all aiortc --collect-all aioice --collect-all pylibsrtp --collect-all google_crc32c --hidden-import _cffi_backend --hidden-import pystray._win32 --paths . celcam_inicio.py
+            --version-file version_info.txt --collect-all customtkinter --collect-submodules av --collect-all aiortc --collect-all aioice --collect-all pylibsrtp --collect-all google_crc32c --collect-all zeroconf --hidden-import _cffi_backend --hidden-import pystray._win32 --paths . celcam_inicio.py
         Revisar "empaquetar el programa"
     } finally { Pop-Location }
 }

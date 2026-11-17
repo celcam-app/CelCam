@@ -30,6 +30,11 @@ def vcam_dll() -> Path:
     return install_dir() / "vcam" / "x64" / "celcam_vcam.dll"
 
 
+def playfair_dll() -> Path:
+    """La parte de FairPlay que necesita AirPlay (playfair de UxPlay, compilado por scripts\\construir.ps1)."""
+    return install_dir() / "airplay" / "celcam_playfair.dll"
+
+
 def adb_exe() -> Path:
     # No viene en el instalador: es de Google y se descarga solo si alguien usa el cable.
     return data_dir() / "adb" / "adb.exe"

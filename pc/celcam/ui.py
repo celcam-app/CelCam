@@ -54,7 +54,12 @@ QR_PIXELS_IPHONE = 240
 KIND_ANDROID = "Android"
 KIND_IPHONE = "iPhone"
 HELP_ANDROID = "Abre CelCam en el celular y toca «Escanear código». Cada celular va a su propia cámara."
-HELP_IPHONE = "Apunta la cámara del iPhone a este código, toca el enlace y luego «Empezar». No hace falta instalar nada."
+HELP_IPHONE = (
+    "Cámara: apunta la cámara del iPhone a este código, toca el enlace y luego «Empezar».\n"
+    "Pantalla: en el Centro de control toca «Duplicar pantalla» y elige CelCam. No hace falta instalar nada."
+)
+# La ventana de pantalla completa de un iPhone por AirPlay: unos 60 cuadros por segundo.
+VIEWER_MS = 15
 SIDE_WIDTH = 330
 LOW_BATTERY = 15
 # Mientras se arrastra el zoom, manda la mano; después, lo que informe el celular.
@@ -92,6 +97,59 @@ def battery_text(status: Status) -> str:
 
 def key_for(names: dict, label: str):
     return next(key for key, value in names.items() if value == label)
+
+
+class MirrorViewer:
+    """La pantalla de un iPhone por AirPlay, como Smart View: pantalla completa fija, la imagen entera y lo más grande posible.
+
+    Esc o doble clic sale de pantalla completa; al cerrar la ventana, todo sigue (la cámara no depende de esto).
+    """
+
+    def __init__(self, parent: tk.Misc, session) -> None:
+        self._session = session
+        self._shown_frame = None
+        self.alive = True
+        self._top = tk.Toplevel(parent)
+        self._top.title(f"{APP_NAME}: pantalla de {session.device}")
+        self._top.configure(bg="#000000")
+        self._picture = tk.Label(self._top, bg="#000000", bd=0, highlightthickness=0)
+        self._picture.pack(fill="both", expand=True)
+        self._full = True
+        self._top.attributes("-fullscreen", True)
+        self._top.bind("<Escape>", lambda _e: self._set_full(False))
+        self._top.bind("<Double-Button-1>", lambda _e: self._set_full(not self._full))
+        self._top.bind("<F11>", lambda _e: self._set_full(not self._full))
+        self._top.protocol("WM_DELETE_WINDOW", self.close)
+        self._top.focus_force()
+        self._tick()
+
+    def _set_full(self, on: bool) -> None:
+        self._full = on
+        self._top.attributes("-fullscreen", on)
+        if not on:
+            self._top.geometry("1280x720")
+
+    def _tick(self) -> None:
+        if not self.alive:
+            return
+        frame = self._session.latest_frame
+        if frame is not None and frame is not self._shown_frame:
+            self._shown_frame = frame
+            width, height = max(1, self._picture.winfo_width()), max(1, self._picture.winfo_height())
+            scale = min(width / frame.width, height / frame.height)
+            target = (max(2, int(frame.width * scale) & ~1), max(2, int(frame.height * scale) & ~1))
+            image = Image.fromarray(frame.reformat(width=target[0], height=target[1], format="rgb24").to_ndarray())
+            photo = ImageTk.PhotoImage(image)
+            self._picture.configure(image=photo)
+            self._picture.image = photo
+        self._top.after(VIEWER_MS, self._tick)
+
+    def close(self) -> None:
+        self.alive = False
+        try:
+            self._top.destroy()
+        except tk.TclError:
+            pass
 
 
 class Window(ctk.CTk):
@@ -312,6 +370,26 @@ class Window(ctk.CTk):
             command=self._go_to_free_camera,
         )
         self._another_button.grid(row=2, column=0, sticky="ew")
+        self._fullscreen_button = ctk.CTkButton(
+            self._connected_panel,
+            text="Ver en pantalla completa",
+            height=32,
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
+            text_color=ACCENT_TEXT,
+            command=self._open_viewer,
+        )
+        self._fullscreen_button.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        self._fullscreen_button.grid_remove()
+        self._viewer: MirrorViewer | None = None
+
+    def _open_viewer(self) -> None:
+        session = self.channel.session
+        if session is None or not getattr(session, "mirroring", False):
+            return
+        if self._viewer is not None and self._viewer.alive:
+            self._viewer.close()
+        self._viewer = MirrorViewer(self, session)
 
     def _menu(self, parent, values, command, width: int = 170) -> ctk.CTkOptionMenu:
         return ctk.CTkOptionMenu(
@@ -729,15 +807,25 @@ class Window(ctk.CTk):
             self._connect_panel.grid_remove()
             self._connected_panel.grid(row=0, column=0, sticky="ew", padx=20)
             name = self.channel.name
+            mirroring = bool(getattr(self.channel.session, "mirroring", False))
             self._connected_title.configure(text=f"Conectado: {status.device}")
+            extra = ""
+            if mirroring:
+                extra = "\n\nEl sonido del iPhone sale por los parlantes de esta PC. Para terminar: «Detener duplicación» en el iPhone."
+            elif status.device in ("iPhone", "iPad"):
+                extra = "\n\nDeja Safari abierto en el iPhone, con la pantalla prendida."
             self._connected_help.configure(
                 text=(
                     f"Ahora elige la cámara «{name}» en Discord, Zoom, Meet o Teams.\n\n"
-                    f"En OBS: Fuentes > + > Dispositivo de captura de video > {name}."
-                    + ("\n\nDeja Safari abierto en el iPhone, con la pantalla prendida." if status.device in ("iPhone", "iPad") else "")
+                    f"En OBS: Fuentes > + > Dispositivo de captura de video > {name}." + extra
                 )
             )
+            if mirroring:
+                self._fullscreen_button.grid()
+            else:
+                self._fullscreen_button.grid_remove()
         else:
+            self._fullscreen_button.grid_remove()
             self._connected_panel.grid_remove()
             self._connect_panel.grid()
         self._photo.paste(self._blank)

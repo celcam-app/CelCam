@@ -124,6 +124,7 @@ def main() -> int:
         log.exception("No se pudo abrir el puerto")
         ctypes.windll.user32.MessageBoxW(None, "No se pudo abrir el puerto de conexión.", APP_NAME, 0x10)
         return 1
+    core.start_airplay()
 
     try:
         if args.sin_ventana:

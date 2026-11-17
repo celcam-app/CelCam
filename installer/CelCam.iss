@@ -43,6 +43,8 @@ Source: "..\pc\dist\CelCam\*"; DestDir: "{app}"; Flags: ignoreversion recursesub
 ; La cámara virtual: una para apps de 64 bits y otra para las de 32.
 Source: "..\pc\stage\vcam\x64\celcam_vcam.dll"; DestDir: "{app}\vcam\x64"; Flags: ignoreversion regserver restartreplace uninsrestartdelete
 Source: "..\pc\stage\vcam\x86\celcam_vcam.dll"; DestDir: "{app}\vcam\x86"; Flags: ignoreversion regserver 32bit restartreplace uninsrestartdelete
+; FairPlay para recibir la pantalla del iPhone por AirPlay (playfair de UxPlay, GPL-3.0).
+Source: "..\pc\stage\airplay\celcam_playfair.dll"; DestDir: "{app}\airplay"; Flags: ignoreversion
 Source: "..\pc\stage\CelCam.apk"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\pc\stage\celcam.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
