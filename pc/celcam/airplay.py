@@ -246,13 +246,17 @@ class MirrorStream:
     """La pantalla: cabecera de 128 bytes y el contenido. Las imágenes vienen cifradas con un AES-CTR continuo."""
 
     def __init__(self, aes_key: bytes, connection_id: int) -> None:
+        self.rekey(aes_key, connection_id)
+        self._decoder: av.CodecContext | None = None
+        self._sps_pps = b""
+        self.codec = ""
+
+    def rekey(self, aes_key: bytes, connection_id: int) -> None:
+        """Llave nueva: el cifrado vuelve a empezar desde cero (mirror_buffer_init_aes en UxPlay)."""
         cid = str(connection_id & 0xFFFFFFFFFFFFFFFF).encode()
         key = _hash16(b"AirPlayStreamKey", cid, aes_key)
         iv = _hash16(b"AirPlayStreamIV", cid, aes_key)
         self._decryptor = Cipher(algorithms.AES(key), modes.CTR(iv)).decryptor()
-        self._decoder: av.CodecContext | None = None
-        self._sps_pps = b""
-        self.codec = ""
 
     def _use(self, codec: str) -> None:
         if self._decoder is None or self.codec != codec:
@@ -537,31 +541,46 @@ class AirPlaySession:
         listener.on_connected(self)
         # Lo que se maneja desde la PC no aplica a una pantalla: así la ventana no pide actualizar ninguna app.
         listener.on_capture(self, {"cmd": "capture", "zoom_min": 1.0, "zoom_max": 1.0, "zoom": 1.0, "torch_available": False,
-                                   "torch": False, "can_switch": False, "dim": False, "fps": MAX_FPS, "rates": "AirPlay"})
+                                   "torch": False, "can_switch": False, "dim": False, "fps": MAX_FPS, "rates": "AirPlay",
+                                   "w": "?", "h": "?"})
 
     async def _mirror_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._resources.append(writer)
         stream = MirrorStream(self._aes_key, self._connection_id)
+        keyed_for = self._connection_id
         listener = self._server.listener
+        sized = False
+        failed = False
         try:
             while True:
                 header = await reader.readexactly(128)
                 size = struct.unpack("<I", header[0:4])[0]
                 if size > 16 * 1024 * 1024:
-                    raise ValueError("cuadro demasiado grande")
+                    raise ValueError(f"cuadro de {size} bytes: cabecera {header[:16].hex()}")
                 payload = await reader.readexactly(size) if size else b""
+                if self._connection_id != keyed_for:
+                    # Otro SETUP de video en la misma sesión: el iPhone cambió la llave (como lo maneja UxPlay).
+                    stream.rekey(self._aes_key, self._connection_id)
+                    keyed_for = self._connection_id
                 frames, received = await asyncio.to_thread(stream.handle, header, payload)
                 for frame in frames:
                     self.latest_frame = frame
                     if self._attached:
+                        if not sized:
+                            sized = True
+                            log.info("%s: pantalla de %dx%d en %s", self.device, frame.width, frame.height, stream.codec.upper())
                         await asyncio.to_thread(listener.on_decoded, self, frame, received)
                         received = 0
         except (asyncio.IncompleteReadError, ConnectionError, OSError):
             pass
         except Exception:
+            failed = True
             log.exception("AirPlay: falló la imagen")
         finally:
             writer.close()
+        if failed:
+            # Sin imagen no tiene sentido dejarla congelada: se corta todo, el iPhone avisa y se vuelve a elegir.
+            await self.close()
 
     async def close(self) -> None:
         if self._closed:

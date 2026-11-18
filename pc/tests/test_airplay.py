@@ -117,6 +117,16 @@ def test_la_imagen_cifrada_se_descifra_y_decodifica():
     assert len(frames) >= 8 and (frames[0].width, frames[0].height) == (640, 360)
 
 
+def test_con_llave_nueva_sigue_descifrando():
+    old, new = bytes(16), bytes(range(16))
+    stream = airplay.MirrorStream(old, 1)
+    stream.rekey(new, 2)
+    frames = []
+    for header, payload in _mirror_packets(new, 2):
+        frames += stream.handle(header, payload)[0]
+    assert len(frames) >= 8
+
+
 def test_con_la_llave_equivocada_no_muestra_basura():
     stream = airplay.MirrorStream(bytes(16), 1)
     with pytest.raises(ValueError):
@@ -171,9 +181,8 @@ def test_el_iphone_va_a_su_camara_y_la_imagen_llega(identity, tmp_path):
             assert wait_for(lambda: len(cameras[0].frames) >= 5, timeout=10)
             assert cameras[0].frames[-1].shape == (480, 856, 3)
             assert session.latest_frame is not None
-        # «Detener» desde la PC corta la duplicación.
-        session.send_control({"cmd": "stop"})
-        asyncio.run_coroutine_threadsafe(session.close(), server.loop).result(5)
-        assert wait_for(lambda: not core.channels[0].status().connected, timeout=5)
+            # Una cabecera imposible: en vez de dejar la imagen congelada, se corta todo.
+            sock.sendall(struct.pack("<I", 0x7FFFFFFF) + bytes(124))
+            assert wait_for(lambda: not core.channels[0].status().connected, timeout=5)
     finally:
         server.stop()
