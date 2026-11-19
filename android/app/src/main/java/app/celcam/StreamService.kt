@@ -24,6 +24,7 @@ import android.view.OrientationEventListener
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.MutableLiveData
 import org.json.JSONException
 import org.json.JSONObject
@@ -49,7 +50,12 @@ data class StreamState(
 /** Mantiene la transmisión aunque la pantalla se apague o se cambie de app. */
 class StreamService : Service() {
 
-    private lateinit var capture: CaptureManager
+    private lateinit var camera: CaptureManager
+
+    // Lo que se transmite: la cámara, o la pantalla del celular si se eligió «Transmitir pantalla».
+    // Se elige antes de arrancar los hilos de la sesión, y cambia recién cuando terminaron.
+    private lateinit var capture: VideoSource
+    private var screen: ScreenCapture? = null
     private lateinit var orientation: OrientationEventListener
     private var wakeLock: PowerManager.WakeLock? = null
     private val wifiLocks = mutableListOf<WifiManager.WifiLock>()
@@ -123,8 +129,9 @@ class StreamService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        capture = CaptureManager(this, ::onEncoded, ::onCaptureInfo, ::onCaptureProblem)
-        previewTexture?.let(capture::setPreview)
+        camera = CaptureManager(this, ::onEncoded, ::onCaptureInfo, ::onCaptureProblem)
+        capture = CameraSource(camera)
+        previewTexture?.let(camera::setPreview)
         orientation = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
                 if (degrees == ORIENTATION_UNKNOWN) return
@@ -149,25 +156,42 @@ class StreamService : Service() {
             requestStop()
             return START_NOT_STICKY
         }
-        val pairing = intent?.getStringExtra(EXTRA_LINK)?.let(Pairing::parse)
-        if (pairing == null || !goForeground()) {
+        if (intent == null) {
+            if (worker == null) stopSelf()
+            return START_NOT_STICKY
+        }
+        val pairing = intent.getStringExtra(EXTRA_LINK)?.let(Pairing::parse)
+        val screenData = IntentCompat.getParcelableExtra(intent, EXTRA_SCREEN_DATA, Intent::class.java)
+        if (worker != null) {
+            // Ya transmite: se sigue igual (Android pide repetir el primer plano, con el tipo que ya tiene).
+            goForeground(screen != null)
+            return START_NOT_STICKY
+        }
+        if (pairing == null || !goForeground(screenData != null)) {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (worker == null) {
-            stopping = false
-            stoppedByPc = false
-            acquireLocks()
-            worker = thread(name = "celcam-sesion") { runSessions(pairing) }
+        stopping = false
+        stoppedByPc = false
+        capture = if (screenData != null) {
+            val code = intent.getIntExtra(EXTRA_SCREEN_CODE, 0)
+            ScreenCapture(this, code, screenData, ::onEncoded, ::onCaptureInfo, ::onCaptureProblem) {
+                // Se cortó desde Android (la notificación del sistema): se detiene todo, como con «Detener».
+                mainHandler.post(::requestStop)
+            }.also { screen = it }
+        } else {
+            CameraSource(camera)
         }
+        acquireLocks()
+        worker = thread(name = "celcam-sesion") { runSessions(pairing) }
         return START_NOT_STICKY
     }
 
-    private fun goForeground(): Boolean = try {
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-        } else {
-            0
+    private fun goForeground(screen: Boolean): Boolean = try {
+        val type = when {
+            screen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            !screen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            else -> 0
         }
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
         true
@@ -386,6 +410,7 @@ class StreamService : Service() {
     }
 
     private fun quarterTurns(): Int {
+        if (capture.upright) return 0
         val device = if (capture.isFront) -deviceDegrees else deviceDegrees
         return ((capture.sensorOrientation + device + 360) % 360) / 90
     }
@@ -406,7 +431,7 @@ class StreamService : Service() {
 
     // Órdenes de la pantalla
 
-    fun setPreview(texture: SurfaceTexture?) = capture.setPreview(texture)
+    fun setPreview(texture: SurfaceTexture?) = camera.setPreview(texture)
     fun switchCamera() = capture.switchCamera()
     fun setZoom(value: Float) = capture.setZoom(value)
     fun setTorch(on: Boolean) = capture.setTorch(on)
@@ -469,6 +494,7 @@ class StreamService : Service() {
         worker = null
         dimmed = false
         lastCapture = null
+        releaseScreen()
         releaseLocks()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -482,15 +508,26 @@ class StreamService : Service() {
         connection?.close()
         orientation.disable()
         unregisterReceiver(batteryReceiver)
-        capture.release()
+        releaseScreen()
+        camera.release()
         releaseLocks()
         super.onDestroy()
+    }
+
+    /** El permiso de pantalla vale para una sola transmisión: al terminar se suelta y se vuelve a la cámara. */
+    private fun releaseScreen() {
+        val current = screen ?: return
+        screen = null
+        capture = CameraSource(camera)
+        current.release()
     }
 
     companion object {
         private const val TAG = "CelCam"
         private const val ACTION_STOP = "app.celcam.DETENER"
         private const val EXTRA_LINK = "enlace"
+        private const val EXTRA_SCREEN_CODE = "pantalla_codigo"
+        private const val EXTRA_SCREEN_DATA = "pantalla_permiso"
         private const val CHANNEL = "transmision"
         private const val NOTIFICATION_ID = 1
         private const val QUEUE_CAPACITY = 64
@@ -523,6 +560,15 @@ class StreamService : Service() {
 
         fun start(context: Context, pairing: Pairing) {
             val intent = Intent(context, StreamService::class.java).putExtra(EXTRA_LINK, pairing.toLink())
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        /** Transmite la pantalla del celular, con el permiso que Android acaba de dar. */
+        fun startScreen(context: Context, pairing: Pairing, resultCode: Int, data: Intent) {
+            val intent = Intent(context, StreamService::class.java)
+                .putExtra(EXTRA_LINK, pairing.toLink())
+                .putExtra(EXTRA_SCREEN_CODE, resultCode)
+                .putExtra(EXTRA_SCREEN_DATA, data)
             ContextCompat.startForegroundService(context, intent)
         }
 

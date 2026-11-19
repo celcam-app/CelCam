@@ -36,6 +36,10 @@ Center, tap "Screen Mirroring" and choose CelCam. The screen shows on the PC (wi
 CelCam camera for your video apps, and the iPhone's sound plays on the PC speakers. Up to 2560×1184 at 60 frames per
 second on an iPhone 13 Pro. Based on how [UxPlay](https://github.com/FDH2/UxPlay) works, including its FairPlay part.
 
+**Android screen:** in the app, tap "Transmitir pantalla" and accept Android's question. Your phone's screen goes to
+the CelCam camera instead of the phone camera, and stays upright when you rotate the phone. Video only: the phone's sound
+is not sent. Android asks again each time, and you can stop it from the app, the notification or the PC.
+
 **Limits:** video only (use your PC or headset microphone). Windows 10 or 11, 64-bit. Android 7 or newer. The Windows
 Camera app may not show the camera, because it does not list this type of virtual camera.
 
@@ -92,6 +96,9 @@ from the iPhone to your PC, encrypted.
 For AirPlay, CelCam announces itself on your local network (mDNS) so iPhones can find it. Screen and sound go
 straight from the iPhone to your PC, encrypted; nothing is recorded.
 
+When you share your Android screen, everything on it (including notifications) goes to your PC, encrypted, like the
+camera video. Nothing is recorded.
+
 Only while an avatar is on, CelCam reads which keys are pressed, where the mouse is and how loud your microphone is, to
 animate the character. It does not save any of this or send it anywhere, and no audio is recorded. The pressed keys can
 be seen in the camera image, so turn off "Mostrar mis teclas" before typing a password. You can also turn off the
@@ -127,6 +134,10 @@ que la PC. No se ve la batería en la PC, porque Safari no da ese dato, y no hay
 **Pantalla del iPhone:** en el iPhone abre el Centro de control, toca «Duplicar pantalla» y elige CelCam. La pantalla se
 ve en la PC (también en pantalla completa), llega a su propia cámara de CelCam y el sonido del iPhone sale por los
 parlantes de la PC. Con un iPhone 13 Pro llega a 2560×1184 y 60 cuadros por segundo.
+
+**Pantalla de Android:** en la app toca «Transmitir pantalla» y acepta lo que pregunta Android. La pantalla del celular
+va a la cámara de CelCam en lugar de la cámara del celular, y queda derecha aunque lo gires. Solo imagen: el sonido del
+celular no se envía. Android lo pregunta cada vez, y lo detienes desde la app, la notificación o la PC.
 
 **Con qué funciona:** se probó con OBS Studio, Discord y Microsoft Edge. Las demás apps que usan cámaras DirectShow
 también deberían verla. La app Cámara de Windows y las de la Tienda todavía no la ven.

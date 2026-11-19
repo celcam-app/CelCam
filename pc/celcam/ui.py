@@ -53,7 +53,10 @@ QR_PIXELS = 220
 QR_PIXELS_IPHONE = 240
 KIND_ANDROID = "Android"
 KIND_IPHONE = "iPhone"
-HELP_ANDROID = "Abre CelCam en el celular y toca «Escanear código». Cada celular va a su propia cámara."
+HELP_ANDROID = (
+    "Abre CelCam en el celular y toca «Escanear código». Cada celular va a su propia cámara.\n"
+    "Para mandar la pantalla del celular, toca «Transmitir pantalla» en la app."
+)
 HELP_IPHONE = (
     "Cámara: apunta la cámara del iPhone a este código, toca el enlace y luego «Empezar».\n"
     "Pantalla: en el Centro de control toca «Duplicar pantalla» y elige CelCam. No hace falta instalar nada."

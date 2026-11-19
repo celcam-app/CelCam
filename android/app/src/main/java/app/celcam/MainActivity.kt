@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.view.TextureView
@@ -28,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dimOverlay: View
     private lateinit var idleMessage: TextView
     private lateinit var connectButton: Button
+    private lateinit var screenButton: Button
     private lateinit var statusText: TextView
     private lateinit var problemText: TextView
     private lateinit var zoomGroup: View
@@ -49,6 +51,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Android pregunta si deja transmitir la pantalla; la respuesta vale para una sola transmisión.
+    private var pendingScreen: Pairing? = null
+    private val screenPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val target = pendingScreen
+        pendingScreen = null
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null && target != null) {
+            StreamService.startScreen(this, target, result.resultCode, data)
+        } else {
+            idleMessage.text = getString(R.string.pantalla_cancelada)
+        }
+    }
+
+    private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        // Sin el aviso igual transmite: solo no se ve la notificación con «Detener».
+        pendingScreen?.let(::askScreen)
+    }
+
     private val scanner = registerForActivityResult(ScanContract()) { result ->
         val contents = result.contents ?: return@registerForActivityResult
         val pairing = Pairing.parse(contents)
@@ -68,6 +88,7 @@ class MainActivity : AppCompatActivity() {
         dimOverlay = findViewById(R.id.dim_overlay)
         idleMessage = findViewById(R.id.idle_message)
         connectButton = findViewById(R.id.connect_button)
+        screenButton = findViewById(R.id.screen_button)
         statusText = findViewById(R.id.status_text)
         problemText = findViewById(R.id.problem_text)
         zoomGroup = findViewById(R.id.zoom_group)
@@ -78,6 +99,7 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.scan_button).setOnClickListener { scan() }
         connectButton.setOnClickListener { Pairing.load(this)?.let(::requestStart) }
+        screenButton.setOnClickListener { Pairing.load(this)?.let(::requestScreen) }
         switchButton.setOnClickListener { StreamService.instance?.switchCamera() }
         torchButton.setOnClickListener { capture?.let { StreamService.instance?.setTorch(!it.torchOn) } }
         findViewById<Button>(R.id.dim_button).setOnClickListener { StreamService.instance?.setDim(true) }
@@ -182,6 +204,25 @@ class MainActivity : AppCompatActivity() {
         StreamService.start(this, pairing)
     }
 
+    /** La pantalla no necesita la cámara: solo el aviso (para poder detenerla) y el permiso de Android. */
+    private fun requestScreen(pairing: Pairing) {
+        pendingScreen = pairing
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            askScreen(pairing)
+        }
+    }
+
+    private fun askScreen(pairing: Pairing) {
+        pendingScreen = pairing
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        screenPermission.launch(manager.createScreenCaptureIntent())
+    }
+
     private fun hasCameraPermission() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
@@ -210,6 +251,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderIdle(state: StreamState) {
         val saved = Pairing.load(this)
         connectButton.isVisible = saved != null
+        screenButton.isVisible = saved != null
         saved?.let { connectButton.text = getString(R.string.conectar_a, it.pcName) }
         idleMessage.text = state.problem ?: getString(
             if (saved == null) R.string.ayuda_primera_vez else R.string.ayuda_con_pc,

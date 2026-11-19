@@ -33,4 +33,7 @@
     <string name="detenido_desde_pc">Se detuvo desde la PC. Toca Conectar para volver a transmitir.</string>
     <string name="pc_y_camara">%1$s (CelCam %2$d)</string>
     <string name="problema_primer_plano">Android no dejó usar la cámara. Abre CelCam y vuelve a tocar Conectar.</string>
+    <string name="transmitir_pantalla">Transmitir pantalla</string>
+    <string name="problema_pantalla">No se pudo transmitir la pantalla. Vuelve a tocar Transmitir pantalla.</string>
+    <string name="pantalla_cancelada">Para transmitir la pantalla, toca Empezar cuando Android lo pregunte.</string>
 </resources>
